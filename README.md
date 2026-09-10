@@ -10,7 +10,13 @@ pip install .
 ## Usage
 
 ```python
-from approval_tests_ir_datasets import verify
+from approval_tests_ir_datasets import DatasetNotFoundError, verify
 
-verify("dataset-id")  # raises ValueError: Dataset 'dataset-id' does not exist.
+try:
+    verify("dataset-id")
+except DatasetNotFoundError as exc:
+    print(exc)
 ```
+
+At the moment, `verify` raises `DatasetNotFoundError` for every input because
+dataset lookup support has not been implemented yet.
