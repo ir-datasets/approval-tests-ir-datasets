@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "approval-tests-ir-datasets"
+version = "0.1.0"
+description = "Approval-test inspired helpers for ir-datasets."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "approval-tests-ir-datasets contributors" }
+]
+
+[project.optional-dependencies]
+test = [
+  "coverage[toml]>=7.6",
+  "pytest>=8.3",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["approval_tests_ir_datasets"]
+
+[tool.coverage.report]
+show_missing = true
