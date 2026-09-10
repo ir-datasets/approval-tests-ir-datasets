@@ -1,5 +1,5 @@
 # approval-tests-ir-datasets
-An utility inspired by approval tests to easily add unit and integration tests for ir-datasets.
+A utility inspired by approval tests to easily add unit and integration tests for ir-datasets.
 
 ## Installation
 
@@ -12,5 +12,5 @@ pip install .
 ```python
 from approval_tests_ir_datasets import verify
 
-verify("dataset-id")
+verify("dataset-id")  # raises ValueError: Dataset 'dataset-id' does not exist.
 ```
