@@ -12,16 +12,6 @@ class DatasetNotFoundError(LookupError):
     """Raised when `verify` is asked to check an unknown dataset."""
 
 
-def verify(dataset_id: str) -> None:
-    """Verify a dataset identifier.
-
-    The current minimal implementation always raises
-    ``DatasetNotFoundError`` for every input because no dataset registry has
-    been added yet.
-    """
-    raise DatasetNotFoundError(f"Dataset '{dataset_id}' does not exist.")
-
-
 def _discover_verifiers() -> List[importlib.metadata.EntryPoint]:
     """Return the entry points registered under ``ENTRY_POINT_GROUP``.
 
@@ -50,14 +40,35 @@ class IrDatasetsApprovalTest:
         """Run every registered verifier against ``dataset_id``.
 
         Returns a dict mapping each verifier's entry point name to the
-        result of its ``verify(dataset_id)`` call.
+        result of its ``verify(dataset_id)`` call. Verifiers that return
+        ``None`` (e.g. because the dataset isn't the kind of resource they
+        apply to) are omitted from the result.
         """
         results: Dict[str, Any] = {}
         for entry_point in _discover_verifiers():
             verifier_cls = entry_point.load()
             verifier = verifier_cls()
-            results[entry_point.name] = verifier.verify(dataset_id)
+            result = verifier.verify(dataset_id)
+            if result is not None:
+                results[entry_point.name] = result
         return results
+
+
+def verify(dataset_id: str) -> Dict[str, Any]:
+    """Verify a dataset identifier.
+
+    Delegates to :class:`IrDatasetsApprovalTest`, running every registered
+    verifier plugin against ``dataset_id`` and returning their aggregated
+    results (see :meth:`IrDatasetsApprovalTest.verify`).
+
+    Raises ``DatasetNotFoundError`` if ``dataset_id`` cannot be resolved --
+    either because no such dataset exists, or because a verifier plugin's
+    optional dependency (e.g. ``ir_datasets``) is not installed.
+    """
+    try:
+        return IrDatasetsApprovalTest().verify(dataset_id)
+    except (KeyError, ImportError) as exc:
+        raise DatasetNotFoundError(f"Dataset '{dataset_id}' does not exist.") from exc
 
 
 __all__ = ["DatasetNotFoundError", "IrDatasetsApprovalTest", "verify"]

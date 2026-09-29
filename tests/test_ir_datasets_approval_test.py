@@ -33,6 +33,11 @@ class _LengthVerifier:
         return len(dataset_id)
 
 
+class _NoneVerifier:
+    def verify(self, dataset_id: str):
+        return None
+
+
 def test_verify_returns_empty_dict_when_no_verifiers_registered(monkeypatch) -> None:
     monkeypatch.setattr(
         importlib.metadata, "entry_points", lambda: _FakeEntryPoints()
@@ -64,6 +69,22 @@ def test_verify_ignores_entry_points_from_other_groups(monkeypatch) -> None:
         [
             _FakeEntryPoint("uppercase", _UppercaseVerifier),
             _FakeEntryPoint("other", _LengthVerifier, group="unrelated.group"),
+        ]
+    )
+    monkeypatch.setattr(
+        importlib.metadata, "entry_points", lambda: fake_entry_points
+    )
+
+    result = IrDatasetsApprovalTest().verify("dataset-id")
+
+    assert result == {"uppercase": "DATASET-ID"}
+
+
+def test_verify_omits_verifiers_that_return_none(monkeypatch) -> None:
+    fake_entry_points = _FakeEntryPoints(
+        [
+            _FakeEntryPoint("uppercase", _UppercaseVerifier),
+            _FakeEntryPoint("none", _NoneVerifier),
         ]
     )
     monkeypatch.setattr(

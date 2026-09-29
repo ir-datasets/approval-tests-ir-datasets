@@ -2,7 +2,7 @@
   "name": "approval-tests-ir-datasets",
   "image": "ghcr.io/ir-datasets/approval-tests-ir-datasets:0.0.1-dev",
   "workspaceFolder": "/workspaces/approval-tests-ir-datasets",
-  "postCreateCommand": "pip install --no-deps -e .",
+  "postStartCommand": "pip install --no-deps -e .",
   "customizations": {
     "vscode": {
       "extensions": [
