@@ -16,12 +16,11 @@ except ImportError:
     TIRA_AVAILABLE = False
 
 TIRA_CLI_AVAILABLE = shutil.which("tira-cli") is not None
-DOCKER_AVAILABLE = shutil.which("docker") is not None
 
 from approval_tests_ir_datasets.verifiers import PyTerrierIndexVerifier
 
 REQUIREMENTS_AVAILABLE = (
-    IR_DATASETS_V2_AVAILABLE and TIRA_AVAILABLE and TIRA_CLI_AVAILABLE and DOCKER_AVAILABLE
+    IR_DATASETS_V2_AVAILABLE and TIRA_AVAILABLE and TIRA_CLI_AVAILABLE
 )
 
 

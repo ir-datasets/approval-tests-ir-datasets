@@ -9,9 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/ir-datasets/approval-tests-ir-datasets:0.0.1-dev
-      # Mount the runner's Docker socket so that PyTerrierIndexVerifier's
-      # "tira-cli run local" can start sibling containers on the host.
-      options: -v /var/run/docker.sock:/var/run/docker.sock
+      # Mount the runner's Docker socket and /tmp so that
+      # PyTerrierIndexVerifier's "tira-cli run local" can start sibling
+      # containers on the host with bind mounts that resolve correctly.
+      options: -v /var/run/docker.sock:/var/run/docker.sock -v /tmp:/tmp
     permissions:
       contents: read
 

@@ -2,16 +2,16 @@
   "name": "approval-tests-ir-datasets",
   "image": "ghcr.io/ir-datasets/approval-tests-ir-datasets:0.0.1-dev",
   "workspaceFolder": "/workspaces/approval-tests-ir-datasets",
-  // The Docker socket is bind-mounted in so PyTerrierIndexVerifier's
-  // "tira-cli run local" can start sibling containers on the host. This
-  // only works out of the box when the Docker engine shares the same
-  // filesystem as this container's workspace mount (true in CI and on
-  // plain Linux Docker hosts opened with a matching bind mount) -- NOT the
-  // default with e.g. Docker Desktop, where "/workspaces/..." has no host
-  // equivalent. See PyTerrierIndexVerifier's docstring for how to point it
-  // at a host-visible scratch directory in that case.
+  // The Docker socket and /tmp are bind-mounted in so PyTerrierIndexVerifier's
+  // "tira-cli run local" can start sibling containers on the host: those
+  // containers need bind-mount sources (the persisted documents, the index
+  // output) that resolve to the same path both here and on the Docker host.
+  // /tmp is a simple, generally host-writable path both engines share (unlike
+  // "/workspaces/...", which has no host equivalent e.g. with Docker Desktop),
+  // which is why PyTerrierIndexVerifier writes its scratch files there.
   "mounts": [
-    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+    "source=/tmp,target=/tmp,type=bind"
   ],
   "postStartCommand": "pip install --no-deps -e .",
   "customizations": {
