@@ -86,14 +86,18 @@ class PyTerrierIndexVerifier:
     This requires the optional ``tira`` package, the ``tira-cli`` and
     ``docker`` commands, and access to a Docker daemon (as configured in
     this repository's dev container). ``tira-cli run local`` also requires
-    a scratch directory that is visible under the same path both inside
+    a scratch directory that is visible under the *same path* both inside
     this process and on the Docker host running the containers it starts
-    (true for the dev container, which mounts the workspace and Docker
-    socket 1:1) -- this is why the scratch directory is created under the
-    current working directory rather than the system temp directory.
+    (true in CI, and on plain Linux Docker hosts opened with a matching
+    bind mount) -- NOT the default for e.g. Docker Desktop, where the dev
+    container's workspace path has no host equivalent. By default the
+    scratch directory is created under the current working directory; set
+    the ``APPROVAL_TESTS_IR_DATASETS_SCRATCH_DIR`` environment variable to
+    override this with a directory known to be host-visible.
     """
 
     APPROACH = "ir-benchmarks/tira-ir-starter/Index (tira-ir-starter-pyterrier)"
+    SCRATCH_DIR_ENV_VAR = "APPROVAL_TESTS_IR_DATASETS_SCRATCH_DIR"
 
     def verify(self, dataset_id: str) -> Optional[Dict[str, Any]]:
         import ir_datasets.v2 as ir_datasets_v2
@@ -110,7 +114,8 @@ class PyTerrierIndexVerifier:
     def _build_index(self, node: Any) -> Dict[str, Any]:
         import shutil
 
-        scratch_root = Path(tempfile.mkdtemp(prefix="tirex-", dir=os.getcwd()))
+        scratch_parent = os.environ.get(self.SCRATCH_DIR_ENV_VAR, os.getcwd())
+        scratch_root = Path(tempfile.mkdtemp(prefix="tirex-", dir=scratch_parent))
         try:
             input_dir = scratch_root / "input"
             output_dir = scratch_root / "output"

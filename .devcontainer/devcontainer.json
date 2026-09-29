@@ -1,14 +1,15 @@
 {
   "name": "approval-tests-ir-datasets",
   "image": "ghcr.io/ir-datasets/approval-tests-ir-datasets:0.0.1-dev",
-  // The workspace is mounted at the *same* path inside the container as on
-  // the host (rather than the usual "/workspaces/..."), and the Docker
-  // socket is bind-mounted in. This "Docker-outside-of-Docker" setup lets
-  // PyTerrierIndexVerifier's "tira-cli run local" start sibling containers
-  // on the host whose bind mounts (input/output/scratch directories under
-  // the workspace) resolve to the same paths on both sides.
-  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
-  "workspaceFolder": "${localWorkspaceFolder}",
+  "workspaceFolder": "/workspaces/approval-tests-ir-datasets",
+  // The Docker socket is bind-mounted in so PyTerrierIndexVerifier's
+  // "tira-cli run local" can start sibling containers on the host. This
+  // only works out of the box when the Docker engine shares the same
+  // filesystem as this container's workspace mount (true in CI and on
+  // plain Linux Docker hosts opened with a matching bind mount) -- NOT the
+  // default with e.g. Docker Desktop, where "/workspaces/..." has no host
+  // equivalent. See PyTerrierIndexVerifier's docstring for how to point it
+  // at a host-visible scratch directory in that case.
   "mounts": [
     "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
   ],
