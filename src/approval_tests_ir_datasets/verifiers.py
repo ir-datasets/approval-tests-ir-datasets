@@ -134,8 +134,10 @@ class PyTerrierIndexVerifier:
             # successfully, because it also tries to evaluate the run against
             # a *registered* TIRA dataset -- which a local documents
             # directory is not. The index itself is still produced, so the
-            # non-zero exit code is intentionally ignored here.
-            subprocess.run(
+            # non-zero exit code is intentionally ignored here. Its output is
+            # captured (rather than left to print) and only surfaced below if
+            # the index actually failed to materialize.
+            process = subprocess.run(
                 [
                     "tira-cli",
                     "run",
@@ -149,12 +151,16 @@ class PyTerrierIndexVerifier:
                 ],
                 env=env,
                 check=False,
+                capture_output=True,
+                text=True,
             )
 
             properties_path = self._find_data_properties(scratch_root)
             if properties_path is None:
                 raise RuntimeError(
-                    "tira-cli did not produce a PyTerrier index (no data.properties found)."
+                    "tira-cli did not produce a PyTerrier index (no data.properties found).\n"
+                    f"--- tira-cli stdout ---\n{process.stdout}\n"
+                    f"--- tira-cli stderr ---\n{process.stderr}"
                 )
             properties = self._parse_properties(properties_path)
 
