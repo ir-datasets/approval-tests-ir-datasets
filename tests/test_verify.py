@@ -25,5 +25,9 @@ class VerifyKnownDatasetTest(unittest.TestCase):
     def test_verify_succeeds_for_known_table_dataset(self) -> None:
         result = verify("irds:cranfield-docs")
 
-        self.assertEqual(result, {"table_line_count": {"length": 1400}})
+        # Only assert on the always-available verifier's result: depending on
+        # the environment, other verifiers (e.g. PyTerrierIndexVerifier, which
+        # additionally requires "tira", "tira-cli" and Docker) may or may not
+        # contribute to the aggregated result.
+        self.assertEqual(result.get("table_line_count"), {"length": 1400})
 

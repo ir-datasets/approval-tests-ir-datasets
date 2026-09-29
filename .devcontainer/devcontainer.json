@@ -1,7 +1,17 @@
 {
   "name": "approval-tests-ir-datasets",
   "image": "ghcr.io/ir-datasets/approval-tests-ir-datasets:0.0.1-dev",
-  "workspaceFolder": "/workspaces/approval-tests-ir-datasets",
+  // The workspace is mounted at the *same* path inside the container as on
+  // the host (rather than the usual "/workspaces/..."), and the Docker
+  // socket is bind-mounted in. This "Docker-outside-of-Docker" setup lets
+  // PyTerrierIndexVerifier's "tira-cli run local" start sibling containers
+  // on the host whose bind mounts (input/output/scratch directories under
+  // the workspace) resolve to the same paths on both sides.
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+  "workspaceFolder": "${localWorkspaceFolder}",
+  "mounts": [
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+  ],
   "postStartCommand": "pip install --no-deps -e .",
   "customizations": {
     "vscode": {
