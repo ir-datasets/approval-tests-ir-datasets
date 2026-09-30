@@ -1,4 +1,5 @@
 import importlib.metadata
+import inspect
 import json
 from typing import Any, Dict, List, Optional
 
@@ -51,13 +52,18 @@ class IrDatasetsApprovalTest:
     The aggregated result is also persisted as ``result.json`` under a
     deterministic directory rooted at ir_datasets' home directory (see
     :mod:`approval_tests_ir_datasets.paths`), on a best-effort basis: this is
-    silently skipped if ``ir_datasets`` isn't installed. Every call to
-    :meth:`verify` re-runs all verifiers from scratch and overwrites this
-    persisted result; use :meth:`cached_result` to read it back without
-    triggering a re-run.
+    silently skipped if ``ir_datasets`` isn't installed. By default, every
+    call to :meth:`verify` re-runs all verifiers from scratch and overwrites
+    this persisted result (see ``recompute``); use :meth:`cached_result` to
+    read it back without triggering a re-run.
     """
 
-    def verify(self, dataset_id: str) -> Dict[str, Any]:
+    def verify(
+        self,
+        dataset_id: str,
+        recompute: bool = True,
+        render_as_html: bool = False,
+    ) -> Dict[str, Any]:
         """Run every registered verifier against ``dataset_id`` and its sub resources.
 
         ``dataset_id`` is first traversed for sub resources (e.g. a
@@ -80,43 +86,102 @@ class IrDatasetsApprovalTest:
 
         Each visited dataset id's flat result is persisted independently
         (see :meth:`cached_result`), in addition to the aggregated result
-        being persisted for ``dataset_id`` itself. This always recomputes
-        every verifier's result from scratch (e.g. rebuilding
-        ``PyTerrierIndexVerifier``'s index) and overwrites any previously
-        persisted result.
+        being persisted for ``dataset_id`` itself.
+
+        ``recompute`` (default ``True``) is forwarded as a ``recompute``
+        keyword to every verifier whose own ``verify(dataset_id, ...)``
+        method accepts one (e.g. :class:`~approval_tests_ir_datasets.verifiers.PyTerrierIndexVerifier`,
+        :class:`~approval_tests_ir_datasets.verifiers.RetrievalVerifier` and
+        :class:`~approval_tests_ir_datasets.verifiers.EvaluationVerifier`,
+        which cache expensive artifacts such as a built index or a
+        retrieval run) -- verifiers without a ``recompute`` parameter (e.g.
+        :class:`~approval_tests_ir_datasets.verifiers.TableLineCountVerifier`)
+        are simply called as before, since they have nothing to cache.
+        With ``recompute=True`` (the default), every verifier always
+        recomputes its result from scratch, e.g. rebuilding
+        ``PyTerrierIndexVerifier``'s index, exactly as before this
+        parameter existed. Pass ``recompute=False`` to instead reuse
+        whatever each verifier already has cached (see each verifier's own
+        docstring for what "cached" means to it), only computing it if
+        nothing is cached yet -- this can turn a slow, Docker/TIRA-backed
+        re-verification into a cheap read of previously produced results
+        (e.g. when only regenerating the HTML report via
+        ``render_as_html`` for an already-verified dataset).
+
+        If ``render_as_html`` is ``True``, the aggregated result is also
+        rendered as a single, self-contained HTML report (see
+        :mod:`approval_tests_ir_datasets.report`) and written to a freshly
+        created temporary directory, ready to be opened directly in a
+        browser. The report reuses `ir-datasets.com
+        <https://ir-datasets.com>`_'s own look and feel (its Tabler-based
+        CSS/JS, fetched from the same CDN/site it uses, rather than a
+        vendored copy) so it looks at home next to it. The written file's
+        path is returned as the result dict's ``"__html_report__"`` key (in
+        addition to being printed to stdout for convenience) -- this key is
+        only ever present when ``render_as_html`` is ``True``.
         """
         dataset_ids = self._collect_dataset_ids(dataset_id)
 
         if len(dataset_ids) == 1:
-            results = self._run_verifiers(dataset_id)
+            results = self._run_verifiers(dataset_id, recompute=recompute)
         else:
             results = {}
             for sub_dataset_id in dataset_ids:
-                sub_results = self._run_verifiers(sub_dataset_id)
+                sub_results = self._run_verifiers(sub_dataset_id, recompute=recompute)
                 results[sub_dataset_id] = sub_results
                 if sub_dataset_id != dataset_id:
                     self._persist_results(sub_dataset_id, sub_results)
 
         self._persist_results(dataset_id, results)
+
+        if render_as_html:
+            report_path = self._render_html_report(dataset_id, dataset_ids, results)
+            print(f"approval_tests_ir_datasets: wrote HTML report to {report_path}")
+            results["__html_report__"] = str(report_path)
+
         return results
 
     @staticmethod
-    def _run_verifiers(dataset_id: str) -> Dict[str, Any]:
+    def _render_html_report(dataset_id: str, dataset_ids: List[str], results: Dict[str, Any]):
+        from .report import write_html_report
+
+        return write_html_report(dataset_id, dataset_ids, results)
+
+    @staticmethod
+    def _run_verifiers(dataset_id: str, recompute: bool = True) -> Dict[str, Any]:
         """Run every registered verifier against a single ``dataset_id``.
 
         Returns a dict mapping each verifier's entry point name to the
         result of its ``verify(dataset_id)`` call. Verifiers that return
         ``None`` (e.g. because the dataset isn't the kind of resource they
-        apply to) are omitted from the result.
+        apply to) are omitted from the result. ``recompute`` is forwarded
+        to each verifier's ``verify`` call as a ``recompute`` keyword, but
+        only if that verifier's ``verify`` method actually declares one
+        (see :meth:`verify`'s docstring); verifiers without one are called
+        with just ``dataset_id``, unaffected by ``recompute``.
         """
         results: Dict[str, Any] = {}
         for entry_point in _discover_verifiers():
             verifier_cls = entry_point.load()
             verifier = verifier_cls()
-            result = verifier.verify(dataset_id)
+            result = IrDatasetsApprovalTest._call_verifier(verifier, dataset_id, recompute)
             if result is not None:
                 results[entry_point.name] = result
         return results
+
+    @staticmethod
+    def _call_verifier(verifier: Any, dataset_id: str, recompute: bool) -> Any:
+        """Call ``verifier.verify(dataset_id)``, additionally passing
+        ``recompute`` as a keyword if (and only if) ``verifier.verify``
+        declares a ``recompute`` parameter.
+        """
+        try:
+            parameters = inspect.signature(verifier.verify).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "recompute" in parameters:
+            return verifier.verify(dataset_id, recompute=recompute)
+        return verifier.verify(dataset_id)
 
     @staticmethod
     def _collect_dataset_ids(dataset_id: str) -> List[str]:
@@ -198,21 +263,36 @@ class IrDatasetsApprovalTest:
         result_path.write_text(json.dumps(results, indent=2, sort_keys=True))
 
 
-def verify(dataset_id: str) -> Dict[str, Any]:
+def verify(
+    dataset_id: str, recompute: bool = True, render_as_html: bool = False
+) -> Dict[str, Any]:
     """Verify a dataset identifier.
 
     Delegates to :class:`IrDatasetsApprovalTest`, running every registered
     verifier plugin against ``dataset_id`` and returning their aggregated
-    results (see :meth:`IrDatasetsApprovalTest.verify`). This always
-    recomputes the result from scratch; use :func:`cached_result` to read
-    back a previously persisted result without re-running the verifiers.
+    results (see :meth:`IrDatasetsApprovalTest.verify`).
+
+    ``recompute`` (default ``True``) is forwarded to every verifier that
+    accepts it, e.g. ``False`` reuses an already-built PyTerrier index or
+    already-computed retrieval runs instead of rebuilding them from
+    scratch; see :meth:`IrDatasetsApprovalTest.verify`'s docstring for
+    details. Use :func:`cached_result` to read back a previously persisted
+    *aggregated* result without re-running any verifier at all.
+
+    If ``render_as_html`` is ``True``, the result is additionally rendered
+    as a self-contained HTML report and written to a temporary directory
+    (see :meth:`IrDatasetsApprovalTest.verify`'s docstring); the written
+    file's path is both printed and available as the result dict's
+    ``"__html_report__"`` key.
 
     Raises ``DatasetNotFoundError`` if ``dataset_id`` cannot be resolved --
     either because no such dataset exists, or because a verifier plugin's
     optional dependency (e.g. ``ir_datasets``) is not installed.
     """
     try:
-        return IrDatasetsApprovalTest().verify(dataset_id)
+        return IrDatasetsApprovalTest().verify(
+            dataset_id, recompute=recompute, render_as_html=render_as_html
+        )
     except (KeyError, ImportError) as exc:
         raise DatasetNotFoundError(f"Dataset '{dataset_id}' does not exist.") from exc
 

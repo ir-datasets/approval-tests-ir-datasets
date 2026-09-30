@@ -1,5 +1,7 @@
 import importlib.metadata
 import json
+from pathlib import Path
+from typing import Any, Dict
 
 import approval_tests_ir_datasets as atid
 from approval_tests_ir_datasets import IrDatasetsApprovalTest
@@ -44,6 +46,89 @@ class _LengthVerifier:
 class _NoneVerifier:
     def verify(self, dataset_id: str):
         return None
+
+
+class _RecomputeAwareVerifier:
+    """Records the ``recompute`` value it was called with, mimicking
+    verifiers like ``PyTerrierIndexVerifier``/``RetrievalVerifier`` that
+    accept a ``recompute`` keyword.
+    """
+
+    calls: list = []
+
+    def verify(self, dataset_id: str, recompute: bool = True) -> Dict[str, Any]:
+        type(self).calls.append(recompute)
+        return {"dataset_id": dataset_id, "recompute": recompute}
+
+
+def test_verify_does_not_render_html_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        importlib.metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+    )
+
+    result = IrDatasetsApprovalTest().verify("dataset-id")
+
+    assert "__html_report__" not in result
+
+
+def test_verify_writes_an_html_report_when_requested(monkeypatch) -> None:
+    monkeypatch.setattr(
+        importlib.metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+    )
+
+    result = IrDatasetsApprovalTest().verify("dataset-id", render_as_html=True)
+
+    report_path = Path(result["__html_report__"])
+    assert report_path.is_file()
+    content = report_path.read_text()
+    assert "dataset-id" in content
+    assert "DATASET-ID" in content
+
+
+def test_verify_defaults_to_recompute_true_for_verifiers_that_accept_it(monkeypatch) -> None:
+    _RecomputeAwareVerifier.calls = []
+    monkeypatch.setattr(
+        importlib.metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("recompute_aware", _RecomputeAwareVerifier)]),
+    )
+
+    result = IrDatasetsApprovalTest().verify("dataset-id")
+
+    assert _RecomputeAwareVerifier.calls == [True]
+    assert result == {"recompute_aware": {"dataset_id": "dataset-id", "recompute": True}}
+
+
+def test_verify_forwards_recompute_false_to_verifiers_that_accept_it(monkeypatch) -> None:
+    _RecomputeAwareVerifier.calls = []
+    monkeypatch.setattr(
+        importlib.metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("recompute_aware", _RecomputeAwareVerifier)]),
+    )
+
+    result = IrDatasetsApprovalTest().verify("dataset-id", recompute=False)
+
+    assert _RecomputeAwareVerifier.calls == [False]
+    assert result == {"recompute_aware": {"dataset_id": "dataset-id", "recompute": False}}
+
+
+def test_verify_ignores_recompute_for_verifiers_that_do_not_accept_it(monkeypatch) -> None:
+    # _UppercaseVerifier.verify only takes dataset_id -- passing recompute
+    # to it would raise a TypeError; verify() must not do that.
+    monkeypatch.setattr(
+        importlib.metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+    )
+
+    result = IrDatasetsApprovalTest().verify("dataset-id", recompute=False)
+
+    assert result == {"uppercase": "DATASET-ID"}
 
 
 def test_verify_returns_empty_dict_when_no_verifiers_registered(monkeypatch) -> None:
