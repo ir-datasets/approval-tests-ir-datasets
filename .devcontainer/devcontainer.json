@@ -12,6 +12,10 @@
     "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
     "source=/tmp,target=/tmp,type=bind"
   ],
+  // Host networking: lets e.g. approval_server.py's "localhost:<port>" (see
+  // the "Approve"/"Deny" HTML report server) be reached directly from the
+  // host's own browser, with no explicit port-forwarding configuration.
+  "runArgs": ["--network=host"],
   // Approval test results and artifacts (e.g. the built PyTerrier index) are
   // stored under "<IR_DATASETS_HOME>/approvals". Pointing it at /tmp keeps
   // that directory host-visible, which PyTerrierIndexVerifier relies on.
