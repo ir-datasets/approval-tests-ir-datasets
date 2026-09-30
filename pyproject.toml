@@ -22,6 +22,7 @@ test = [
 table_line_count = "approval_tests_ir_datasets.verifiers:TableLineCountVerifier"
 qrel_stats = "approval_tests_ir_datasets.verifiers:QrelTableStatsVerifier"
 pyterrier_index = "approval_tests_ir_datasets.verifiers:PyTerrierIndexVerifier"
+retrieval = "approval_tests_ir_datasets.verifiers:RetrievalVerifier"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -222,4 +222,148 @@ class PyTerrierIndexVerifier:
         return properties
 
 
-__all__ = ["PyTerrierIndexVerifier", "QrelTableStatsVerifier", "TableLineCountVerifier"]
+class RetrievalVerifier:
+    """Runs a full BM25 retrieval pipeline for an ir_datasets v2 benchmark via TIRA.
+
+    Loads ``dataset_id`` with ``ir_datasets.v2.load``. If the resolved node
+    doesn't have both a document table and a query table (e.g. it's just a
+    ``DocTable`` or ``QueryTable`` on its own, or a benchmark without
+    queries), ``None`` is returned.
+
+    Otherwise:
+
+    1. The document table's PyTerrier index is (re)built via
+       :class:`PyTerrierIndexVerifier` (see its docstring).
+    2. The queries are persisted as ``queries.xml`` (TREC topics format, as
+       expected by the retrieval software) under the deterministic
+       ``approvals_dir(dataset_id, "retrieval")`` directory.
+    3. ``tira-ir-starter-pyterrier``'s BM25 retrieval software is run
+       directly against the persisted queries, with the PyTerrier index
+       from step 1 passed in as its input run (``$inputRun``), producing a
+       TREC run file (``run.txt``).
+
+    Returns ``{"num_queries": ..., "num_results": ...}``, counting the
+    queries retrieved for and the total number of result lines across all
+    of them.
+
+    This requires the optional ``tira`` package, the ``docker`` command,
+    and access to a Docker daemon (as configured in this repository's dev
+    container). Like :class:`PyTerrierIndexVerifier`, all working
+    directories are created under ir_datasets' home directory and must be
+    host-visible (see that class' docstring for details), and are kept
+    around after a successful run -- cleared before each rebuild. Use
+    :meth:`cached_run_path` to look up a previously produced run file
+    without rebuilding it.
+    """
+
+    APPROACH = "ir-benchmarks/tira-ir-starter/BM25 (tira-ir-starter-pyterrier)"
+
+    def verify(self, dataset_id: str) -> Optional[Dict[str, Any]]:
+        import ir_datasets.v2 as ir_datasets_v2
+        import tira  # noqa: F401 -- lazily required; propagates ImportError if missing.
+
+        node = ir_datasets_v2.load(dataset_id)
+        has = getattr(node, "has", None)
+        if not callable(has) or not (has("docs") and has("queries")):
+            return None
+
+        return self._run_retrieval(node, dataset_id)
+
+    def _run_retrieval(self, node: Any, dataset_id: str) -> Dict[str, Any]:
+        import shutil
+
+        from tira.rest_api_client import Client
+
+        from .paths import approvals_dir
+
+        docs_dataset_id = node.docs.qualified_name
+
+        # Always (re)build the index from scratch, consistent with the
+        # top-level contract that every verify() call recomputes its result.
+        PyTerrierIndexVerifier().verify(docs_dataset_id)
+        index_dir = PyTerrierIndexVerifier().cached_index_path(docs_dataset_id)
+        if index_dir is None:
+            raise RuntimeError(
+                f"PyTerrierIndexVerifier did not produce an index for '{docs_dataset_id}'."
+            )
+        # pyterrier_cli.py appends "/index" to the directory it is given, so
+        # the directory *containing* the "index" directory must be passed.
+        input_run_dir = index_dir.parent
+
+        scratch_root = approvals_dir(dataset_id, "retrieval")
+        # Rebuild from a clean slate every time, so a previous run can't
+        # leak into this one.
+        shutil.rmtree(scratch_root, ignore_errors=True)
+        scratch_root.mkdir(parents=True, exist_ok=True)
+
+        input_dir = scratch_root / "input"
+        output_dir = scratch_root / "output"
+        input_dir.mkdir()
+        output_dir.mkdir()
+
+        num_queries = self._write_queries(node.queries, dataset_id, input_dir / "queries.xml")
+
+        client = Client()
+        team, software = self.APPROACH.split("/")[1:]
+        system_details = client.public_system_details(team, software)
+        image = system_details.get("public_image_name") or system_details["tira_image_name"]
+
+        client.local_execution.run(
+            image=image,
+            command=system_details["command"],
+            input_dir=input_dir,
+            output_dir=output_dir,
+            input_run=input_run_dir,
+            allow_network=False,
+            forward_environment_variables=system_details.get("forward_environment_variable"),
+        )
+
+        run_path = output_dir / "run.txt"
+        if not run_path.is_file():
+            raise RuntimeError(f"The retrieval software did not produce a run file at {run_path}.")
+
+        return {
+            "num_queries": num_queries,
+            "num_results": sum(1 for _ in run_path.open()),
+        }
+
+    @classmethod
+    def cached_run_path(cls, dataset_id: str) -> Optional[Path]:
+        """Return the run file of a previously executed retrieval.
+
+        Looks up the deterministic ``approvals_dir(dataset_id, "retrieval")``
+        directory (see :mod:`approval_tests_ir_datasets.paths`) for a
+        ``run.txt`` file, *without* invoking the retrieval software again.
+        Returns ``None`` if no retrieval has been run for ``dataset_id`` yet,
+        or if ``ir_datasets`` isn't installed.
+        """
+        try:
+            from .paths import approvals_dir
+
+            scratch_root = approvals_dir(dataset_id, "retrieval")
+        except ImportError:
+            return None
+        run_path = scratch_root / "output" / "run.txt"
+        return run_path if run_path.is_file() else None
+
+    @staticmethod
+    def _write_queries(queries: Any, dataset_id: str, path: Path) -> int:
+        import xml.etree.ElementTree as ET
+
+        root = ET.Element("topics", attrib={"ir-datasets-id": dataset_id})
+        num_queries = 0
+        for query in queries:
+            topic = ET.SubElement(root, "topic", attrib={"number": str(query.query_id)})
+            query_element = ET.SubElement(topic, "query")
+            query_element.text = query.default_text()
+            num_queries += 1
+        ET.ElementTree(root).write(path, encoding="unicode")
+        return num_queries
+
+
+__all__ = [
+    "PyTerrierIndexVerifier",
+    "QrelTableStatsVerifier",
+    "RetrievalVerifier",
+    "TableLineCountVerifier",
+]
