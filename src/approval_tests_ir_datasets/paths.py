@@ -65,19 +65,23 @@ def approvals_dir(dataset_id: str, *parts: str) -> Path:
     return directory
 
 
-def approved_dir(dataset_id: str, *parts: str) -> Path:
+def approved_dir(dataset_id: str, *parts: str, create: bool = True) -> Path:
     """The deterministic directory a human-approved result snapshot for
     ``dataset_id`` is stored in (see ``APPROVED_DIR_NAME``).
 
     Mirrors :func:`approvals_dir`, but rooted at
     ``<ir_datasets_home>/approved`` instead of ``.../approvals``. The
     directory (and any missing parents) is created if it doesn't already
-    exist.
+    exist, unless ``create`` is ``False`` -- pass ``create=False`` when
+    merely checking whether a snapshot was ever approved (e.g.
+    :meth:`~approval_tests_ir_datasets.IrDatasetsApprovalTest.cached_approved_result`),
+    so that check itself doesn't leave behind an empty directory.
     """
     directory = approvals_home().parent / APPROVED_DIR_NAME / sanitize_dataset_id(dataset_id)
     for part in parts:
         directory = directory / part
-    directory.mkdir(parents=True, exist_ok=True)
+    if create:
+        directory.mkdir(parents=True, exist_ok=True)
     return directory
 
 

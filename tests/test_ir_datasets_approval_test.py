@@ -347,3 +347,111 @@ if IR_DATASETS_AVAILABLE:
         assert not (tmp_path / "approved").exists()
         # The regular (unapproved) result is still persisted, as always.
         assert (tmp_path / "approvals" / "dataset-id" / "result.json").is_file()
+
+
+if IR_DATASETS_AVAILABLE:
+
+    def _seed_approved_result(tmp_path: Path, dataset_id: str, result: Dict[str, Any]) -> None:
+        directory = tmp_path / "approved" / dataset_id
+        directory.mkdir(parents=True)
+        (directory / "result.json").write_text(json.dumps(result))
+
+    def test_verify_does_not_add_a_comparison_key_when_no_approved_snapshot_exists(
+        tmp_path, monkeypatch
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+
+        result = IrDatasetsApprovalTest().verify("dataset-id")
+
+        assert result == {"uppercase": "DATASET-ID"}
+        assert "__approval_comparison__" not in result
+
+    def test_verify_reports_a_match_against_an_identical_approved_snapshot(
+        tmp_path, monkeypatch, capsys
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        _seed_approved_result(tmp_path, "dataset-id", {"uppercase": "DATASET-ID"})
+
+        result = IrDatasetsApprovalTest().verify("dataset-id")
+
+        assert result["__approval_comparison__"] == {"matches": True, "differences": []}
+        assert "results match the approved snapshot" in capsys.readouterr().out
+
+    def test_verify_reports_differences_against_a_differing_approved_snapshot(
+        tmp_path, monkeypatch, capsys
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        _seed_approved_result(tmp_path, "dataset-id", {"uppercase": "SOMETHING-ELSE"})
+
+        result = IrDatasetsApprovalTest().verify("dataset-id")
+
+        comparison = result["__approval_comparison__"]
+        assert comparison["matches"] is False
+        assert len(comparison["differences"]) == 1
+        assert "uppercase" in comparison["differences"][0]
+        printed = capsys.readouterr().out
+        assert "results differ from the approved snapshot" in printed
+        assert comparison["differences"][0] in printed
+
+    def test_verify_tolerates_small_float_differences_against_an_approved_snapshot(
+        tmp_path, monkeypatch
+    ) -> None:
+        import ir_datasets
+
+        class _FloatVerifier:
+            def verify(self, dataset_id: str) -> float:
+                return 0.34331269929286764
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("score", _FloatVerifier)]),
+        )
+        _seed_approved_result(tmp_path, "dataset-id", {"score": 0.34331265929286764})
+
+        result = IrDatasetsApprovalTest().verify("dataset-id")
+
+        assert result["__approval_comparison__"] == {"matches": True, "differences": []}
+
+    def test_cached_approved_result_returns_none_when_nothing_was_approved(
+        tmp_path, monkeypatch
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+
+        assert IrDatasetsApprovalTest.cached_approved_result("dataset-id") is None
+
+    def test_cached_approved_result_returns_a_previously_approved_snapshot(
+        tmp_path, monkeypatch
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        _seed_approved_result(tmp_path, "dataset-id", {"uppercase": "DATASET-ID"})
+
+        assert IrDatasetsApprovalTest.cached_approved_result("dataset-id") == {
+            "uppercase": "DATASET-ID"
+        }

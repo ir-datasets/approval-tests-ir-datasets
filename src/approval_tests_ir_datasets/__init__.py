@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from . import hf_local_provider as _hf_local_provider
+from .comparison import compare_results
 from .hf_local import local_hf_repo
 
 #: Registering "hf-local:" only needs importing this module -- see its own
@@ -154,6 +155,23 @@ class IrDatasetsApprovalTest:
         approved snapshot is never silently overwritten by a later,
         unapproved run; if "Deny" was clicked, nothing further is done.
         Either way, a message describing the outcome is printed.
+
+        Every call also compares the freshly computed ``results`` against a
+        previously approved snapshot for ``dataset_id``, if one exists (see
+        :func:`approval_tests_ir_datasets.paths.approved_dir` and
+        ``wait_for_approval`` above) -- unconditionally, with no parameter
+        to opt in or out. Values are compared type-dependently: integers
+        and strings must match exactly, floats match within a small
+        absolute tolerance (see :mod:`approval_tests_ir_datasets.comparison`),
+        and dicts/lists are compared recursively. If no approved snapshot
+        exists yet, this is a no-op beyond an informational print -- in
+        particular, ``results`` is *not* modified, so first-time callers
+        (and every existing test, none of which pre-seed an approved
+        snapshot) are unaffected. If one exists, ``results`` gains a
+        ``"__approval_comparison__"`` key (``{"matches": bool,
+        "differences": [...]}``, see
+        :func:`approval_tests_ir_datasets.comparison.compare_results`), and
+        a message is printed describing whether it matched.
         """
         with self._hf_local_context(dataset_id, hf_local_dir):
             dataset_ids = self._collect_dataset_ids(dataset_id)
@@ -169,6 +187,8 @@ class IrDatasetsApprovalTest:
                         self._persist_results(sub_dataset_id, sub_results)
 
             self._persist_results(dataset_id, results)
+
+        self._compare_to_approved(dataset_id, results)
 
         if render_as_html or wait_for_approval:
             report_path = self._render_html_report(dataset_id, dataset_ids, results)
@@ -315,6 +335,61 @@ class IrDatasetsApprovalTest:
         return visited
 
     @staticmethod
+    def cached_approved_result(dataset_id: str) -> Optional[Dict[str, Any]]:
+        """Return the human-approved result snapshot for ``dataset_id``, if any.
+
+        Reads ``result.json`` from the deterministic approved-snapshot
+        directory for ``dataset_id`` (see
+        :func:`approval_tests_ir_datasets.paths.approved_dir`), written by a
+        previous ``wait_for_approval=True`` call whose "Approve" button was
+        clicked. Returns ``None`` if no snapshot has been approved yet, or
+        if ``ir_datasets`` isn't installed.
+        """
+        try:
+            from .paths import approved_dir
+
+            directory = approved_dir(dataset_id, create=False)
+        except ImportError:
+            return None
+        result_path = directory / "result.json"
+        if not result_path.is_file():
+            return None
+        return json.loads(result_path.read_text())
+
+    @staticmethod
+    def _compare_to_approved(dataset_id: str, results: Dict[str, Any]) -> None:
+        """Compare ``results`` against ``dataset_id``'s approved snapshot
+        (see :meth:`cached_approved_result`), if one exists.
+
+        Does nothing (beyond an informational print) if no snapshot has
+        been approved yet -- in particular, ``results`` is left untouched,
+        so callers with no approved snapshot (e.g. every existing test)
+        are unaffected. Otherwise, attaches the comparison (see
+        :func:`approval_tests_ir_datasets.comparison.compare_results`) to
+        ``results["__approval_comparison__"]`` and prints a message
+        describing whether it matched (and, if not, every difference
+        found).
+        """
+        approved = IrDatasetsApprovalTest.cached_approved_result(dataset_id)
+        if approved is None:
+            print(
+                f"approval_tests_ir_datasets: no approved result for {dataset_id!r} yet "
+                "-- nothing to compare against"
+            )
+            return
+        comparison = compare_results(approved, results)
+        results["__approval_comparison__"] = comparison
+        if comparison["matches"]:
+            print(f"approval_tests_ir_datasets: results match the approved snapshot for {dataset_id!r}")
+        else:
+            print(
+                f"approval_tests_ir_datasets: results differ from the approved snapshot for "
+                f"{dataset_id!r}:"
+            )
+            for difference in comparison["differences"]:
+                print(f"  - {difference}")
+
+    @staticmethod
     def cached_result(dataset_id: str) -> Optional[Dict[str, Any]]:
         """Return the result persisted by a previous :meth:`verify` call.
 
@@ -413,9 +488,20 @@ def cached_result(dataset_id: str) -> Optional[Dict[str, Any]]:
     return IrDatasetsApprovalTest.cached_result(dataset_id)
 
 
+def cached_approved_result(dataset_id: str) -> Optional[Dict[str, Any]]:
+    """Return the human-approved result snapshot for ``dataset_id``, if any.
+
+    See :meth:`IrDatasetsApprovalTest.cached_approved_result`. Returns
+    ``None`` if no snapshot has been approved yet, or if ``ir_datasets``
+    isn't installed.
+    """
+    return IrDatasetsApprovalTest.cached_approved_result(dataset_id)
+
+
 __all__ = [
     "DatasetNotFoundError",
     "IrDatasetsApprovalTest",
+    "cached_approved_result",
     "cached_result",
     "local_hf_repo",
     "verify",
