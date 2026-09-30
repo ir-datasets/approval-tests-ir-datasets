@@ -2,6 +2,8 @@ import contextlib
 import importlib.metadata
 import inspect
 import json
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -170,18 +172,20 @@ class IrDatasetsApprovalTest:
         :func:`approval_tests_ir_datasets.comparison.compare_results`).
 
         Before returning, a short, human-friendly summary is printed to
-        stdout: how many verifiers ran across how many resources, where
-        the HTML report was written (if any), whether results matched the
-        approved snapshot (if any), and the outcome of an approval
+        stdout: whether (and when) an approved snapshot exists for
+        ``dataset_id``, how many tests ran and how long that took, whether
+        results matched the approved snapshot (if any), where the HTML
+        report was written (if any), and the outcome of an approval
         decision (if ``wait_for_approval`` was used) -- each as a single
-        check-mark/cross-mark-prefixed line. This summary deliberately
-        omits each verifier's own raw output and the full list of
-        approval differences (both remain available on the returned dict)
-        to stay readable; see :meth:`_print_summary`.
+        check-mark/cross-mark/info-prefixed line. This summary
+        deliberately omits each verifier's own raw output and the full
+        list of approval differences (both remain available on the
+        returned dict) to stay readable; see :meth:`_print_summary`.
         """
         with self._hf_local_context(dataset_id, hf_local_dir):
             dataset_ids = self._collect_dataset_ids(dataset_id)
 
+            started_at = time.perf_counter()
             if len(dataset_ids) == 1:
                 results = self._run_verifiers(dataset_id, recompute=recompute)
             else:
@@ -191,6 +195,7 @@ class IrDatasetsApprovalTest:
                     results[sub_dataset_id] = sub_results
                     if sub_dataset_id != dataset_id:
                         self._persist_results(sub_dataset_id, sub_results)
+            elapsed_seconds = time.perf_counter() - started_at
 
             self._persist_results(dataset_id, results)
 
@@ -206,7 +211,9 @@ class IrDatasetsApprovalTest:
             approved = self._run_approval_server(report_path)
             approval_status = self._handle_approval_decision(dataset_id, results, approved)
 
-        self._print_summary(dataset_id, dataset_ids, results, report_path, approval_status)
+        self._print_summary(
+            dataset_id, dataset_ids, results, report_path, approval_status, elapsed_seconds
+        )
 
         return results
 
@@ -234,50 +241,59 @@ class IrDatasetsApprovalTest:
         results: Dict[str, Any],
         report_path: Optional[Path],
         approval_status: Optional[str],
+        elapsed_seconds: float,
     ) -> None:
         """Print one compact, human-friendly overview of a :meth:`verify`
-        call -- a handful of check-mark/cross-mark-prefixed bullet lines
-        (how many verifiers ran, where the HTML report went, whether
-        results matched a previously approved snapshot, and the outcome of
-        an approval decision). Deliberately omits each verifier's own raw
-        output (e.g. computed statistics, sample documents, ...) and the
-        full list of approval differences -- both remain available on the
-        returned dict (``results`` itself, and
+        call -- a handful of check-mark/cross-mark/info-prefixed bullet
+        lines: whether an approved snapshot exists (and when it was
+        approved), how many tests ran and how long that took, whether
+        results matched that snapshot, and the outcome of an approval
+        decision. Deliberately omits each verifier's own raw output (e.g.
+        computed statistics, sample documents, ...) and the full list of
+        approval differences -- both remain available on the returned
+        dict (``results`` itself, and
         ``results["__approval_comparison__"]["differences"]``) for anyone
         who wants the detail, but would just be noise here.
         """
         stripped = IrDatasetsApprovalTest._strip_bookkeeping_keys(results)
         if len(dataset_ids) == 1:
-            verifier_count = len(stripped)
+            test_count = len(stripped)
         else:
-            verifier_count = sum(
+            test_count = sum(
                 len(sub_results)
                 for key, sub_results in stripped.items()
                 if key in dataset_ids and isinstance(sub_results, dict)
             )
-        resource_count = len(dataset_ids)
 
-        lines = [
-            f"✅ {verifier_count} "
-            f"{'verifier' if verifier_count == 1 else 'verifiers'} ran across "
-            f"{resource_count} {'resource' if resource_count == 1 else 'resources'}"
-        ]
-        if report_path is not None:
-            lines.append(f"📄 HTML report: {report_path}")
+        lines = []
+
+        metadata = IrDatasetsApprovalTest._cached_approval_metadata(dataset_id)
+        if metadata is not None and metadata.get("approved_at"):
+            approved_at = IrDatasetsApprovalTest._format_timestamp(metadata["approved_at"])
+            lines.append(
+                f"ℹ️  Approved results for {dataset_id!r} exist (approved on {approved_at})"
+            )
+
+        duration = IrDatasetsApprovalTest._format_duration(elapsed_seconds)
+        lines.append(
+            f"✅ Running {test_count} {'test' if test_count == 1 else 'tests'} took {duration}"
+        )
 
         comparison = results.get("__approval_comparison__")
         if comparison is None:
-            lines.append("ℹ️  no approved snapshot yet -- nothing to compare against")
+            lines.append(f"ℹ️  No approved results exist yet for {dataset_id!r}")
         elif comparison["matches"]:
-            lines.append("✅ matches the approved snapshot")
+            lines.append("✅ The executed tests match the previously approved results.")
         else:
             count = len(comparison["differences"])
             lines.append(
-                f"❌ differs from the approved snapshot ({count} "
+                f"❌ The executed tests differ from the previously approved results ({count} "
                 f"{'difference' if count == 1 else 'differences'} -- see "
-                "result['__approval_comparison__']['differences'])"
+                "result['__approval_comparison__']['differences'])."
             )
 
+        if report_path is not None:
+            lines.append(f"📄 HTML report: {report_path}")
         if approval_status is not None:
             lines.append(approval_status)
 
@@ -288,6 +304,45 @@ class IrDatasetsApprovalTest:
         for line in lines:
             print(f" {line}")
         print(border)
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """A short, human-friendly rendering of ``seconds`` (e.g. ``"12
+        seconds"``, ``"0.03 seconds"``), used by :meth:`_print_summary`.
+        """
+        if seconds < 0.01:
+            return "less than 0.01 seconds"
+        rounded = round(seconds, 2)
+        return f"{rounded:g} second{'s' if rounded != 1 else ''}"
+
+    @staticmethod
+    def _format_timestamp(iso_timestamp: str) -> str:
+        """A short, human-friendly rendering of an ISO 8601 timestamp (e.g.
+        ``"2024-01-02 03:04"``), used by :meth:`_print_summary`. Falls back
+        to the raw string if it isn't a valid ISO 8601 timestamp.
+        """
+        try:
+            return datetime.fromisoformat(iso_timestamp).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return iso_timestamp
+
+    @staticmethod
+    def _cached_approval_metadata(dataset_id: str) -> Optional[Dict[str, Any]]:
+        """The metadata (currently just ``{"approved_at": <ISO 8601 timestamp>}``)
+        written alongside ``dataset_id``'s approved snapshot's ``result.json``
+        (see :meth:`_handle_approval_decision`), or ``None`` if no snapshot
+        has been approved yet, or if ``ir_datasets`` isn't installed.
+        """
+        try:
+            from .paths import approved_dir
+
+            directory = approved_dir(dataset_id, create=False)
+        except ImportError:
+            return None
+        metadata_path = directory / "metadata.json"
+        if not metadata_path.is_file():
+            return None
+        return json.loads(metadata_path.read_text())
 
     @staticmethod
     def _run_approval_server(report_path: Path) -> bool:
@@ -316,6 +371,8 @@ class IrDatasetsApprovalTest:
             return "⚠️  approved, but ir_datasets isn't installed -- results were not stored"
         stored_results = IrDatasetsApprovalTest._strip_bookkeeping_keys(results)
         (directory / "result.json").write_text(json.dumps(stored_results, indent=2, sort_keys=True))
+        approved_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        (directory / "metadata.json").write_text(json.dumps({"approved_at": approved_at}))
         return f"✅ approved -- snapshot stored in {directory}"
 
     @staticmethod

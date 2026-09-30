@@ -335,6 +335,12 @@ if IR_DATASETS_AVAILABLE:
         assert "__html_report__" not in stored
         assert stored == {"uppercase": "DATASET-ID"}
 
+        # Approving also records *when* it happened, so a later verify()
+        # can tell the user an approved snapshot exists and since when.
+        metadata_path = tmp_path / "approved" / "dataset-id" / "metadata.json"
+        assert metadata_path.is_file()
+        assert "approved_at" in json.loads(metadata_path.read_text())
+
     def test_verify_discards_nothing_extra_when_denied(tmp_path, monkeypatch) -> None:
         import ir_datasets
 
@@ -357,10 +363,16 @@ if IR_DATASETS_AVAILABLE:
 
 if IR_DATASETS_AVAILABLE:
 
-    def _seed_approved_result(tmp_path: Path, dataset_id: str, result: Dict[str, Any]) -> None:
+    def _seed_approved_result(
+        tmp_path: Path,
+        dataset_id: str,
+        result: Dict[str, Any],
+        approved_at: str = "2024-01-02T03:04:05+00:00",
+    ) -> None:
         directory = tmp_path / "approved" / dataset_id
         directory.mkdir(parents=True)
         (directory / "result.json").write_text(json.dumps(result))
+        (directory / "metadata.json").write_text(json.dumps({"approved_at": approved_at}))
 
     def test_verify_does_not_add_a_comparison_key_when_no_approved_snapshot_exists(
         tmp_path, monkeypatch
@@ -395,7 +407,71 @@ if IR_DATASETS_AVAILABLE:
         result = IrDatasetsApprovalTest().verify("dataset-id")
 
         assert result["__approval_comparison__"] == {"matches": True, "differences": []}
-        assert "matches the approved snapshot" in capsys.readouterr().out
+        assert "match the previously approved results" in capsys.readouterr().out
+
+    def test_verify_summary_mentions_when_an_approved_snapshot_exists(
+        tmp_path, monkeypatch, capsys
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        _seed_approved_result(
+            tmp_path,
+            "dataset-id",
+            {"uppercase": "DATASET-ID"},
+            approved_at="2024-01-02T03:04:05+00:00",
+        )
+
+        IrDatasetsApprovalTest().verify("dataset-id")
+
+        printed = capsys.readouterr().out
+        assert "Approved results for 'dataset-id' exist" in printed
+        assert "2024-01-02" in printed
+
+    def test_verify_summary_reports_test_count_and_duration(
+        tmp_path, monkeypatch, capsys
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints(
+                [
+                    _FakeEntryPoint("uppercase", _UppercaseVerifier),
+                    _FakeEntryPoint("length", _LengthVerifier),
+                ]
+            ),
+        )
+
+        IrDatasetsApprovalTest().verify("dataset-id")
+
+        printed = capsys.readouterr().out
+        assert "Running 2 tests took" in printed
+
+    def test_verify_summary_does_not_mention_an_approved_snapshot_when_none_exists(
+        tmp_path, monkeypatch, capsys
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+
+        IrDatasetsApprovalTest().verify("dataset-id")
+
+        printed = capsys.readouterr().out
+        assert "Approved results for" not in printed
+        assert "No approved results exist yet for 'dataset-id'" in printed
 
     def test_verify_excludes_html_report_path_from_the_comparison(
         tmp_path, monkeypatch
@@ -446,7 +522,7 @@ if IR_DATASETS_AVAILABLE:
         # The summary reports only that (and how many) differences were
         # found, not their full text -- the detail stays on the returned
         # dict for anyone who wants it.
-        assert "differs from the approved snapshot" in printed
+        assert "differ from the previously approved results" in printed
         assert "1 difference" in printed
         assert comparison["differences"][0] not in printed
 
