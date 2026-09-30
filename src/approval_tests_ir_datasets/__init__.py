@@ -1,7 +1,18 @@
+import contextlib
 import importlib.metadata
 import inspect
 import json
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+from . import hf_local_provider as _hf_local_provider
+from .hf_local import local_hf_repo
+
+#: Registering "hf-local:" only needs importing this module -- see its own
+#: docstring. Calling this here (rather than relying solely on the module's
+#: own import-time call) makes the dependency explicit and keeps it
+#: idempotent/no-op if ir_datasets isn't installed.
+_hf_local_provider.register()
 
 #: Entry point group under which verifier classes register themselves.
 #: Each entry point is expected to resolve to a class that can be
@@ -63,6 +74,7 @@ class IrDatasetsApprovalTest:
         dataset_id: str,
         recompute: bool = True,
         render_as_html: bool = False,
+        hf_local_dir: Optional[Union[str, Path]] = None,
     ) -> Dict[str, Any]:
         """Run every registered verifier against ``dataset_id`` and its sub resources.
 
@@ -119,20 +131,28 @@ class IrDatasetsApprovalTest:
         path is returned as the result dict's ``"__html_report__"`` key (in
         addition to being printed to stdout for convenience) -- this key is
         only ever present when ``render_as_html`` is ``True``.
+
+        If ``hf_local_dir`` is given, ``dataset_id`` must be an ``hf:``
+        (Hugging Face Hub) id, and it is resolved against this local
+        directory instead of the real Hub for the duration of this call
+        (see :func:`approval_tests_ir_datasets.hf_local.local_hf_repo`) --
+        useful for verifying a dataset card and data files persisted on
+        disk (e.g. a test fixture) without any network access.
         """
-        dataset_ids = self._collect_dataset_ids(dataset_id)
+        with self._hf_local_context(dataset_id, hf_local_dir):
+            dataset_ids = self._collect_dataset_ids(dataset_id)
 
-        if len(dataset_ids) == 1:
-            results = self._run_verifiers(dataset_id, recompute=recompute)
-        else:
-            results = {}
-            for sub_dataset_id in dataset_ids:
-                sub_results = self._run_verifiers(sub_dataset_id, recompute=recompute)
-                results[sub_dataset_id] = sub_results
-                if sub_dataset_id != dataset_id:
-                    self._persist_results(sub_dataset_id, sub_results)
+            if len(dataset_ids) == 1:
+                results = self._run_verifiers(dataset_id, recompute=recompute)
+            else:
+                results = {}
+                for sub_dataset_id in dataset_ids:
+                    sub_results = self._run_verifiers(sub_dataset_id, recompute=recompute)
+                    results[sub_dataset_id] = sub_results
+                    if sub_dataset_id != dataset_id:
+                        self._persist_results(sub_dataset_id, sub_results)
 
-        self._persist_results(dataset_id, results)
+            self._persist_results(dataset_id, results)
 
         if render_as_html:
             report_path = self._render_html_report(dataset_id, dataset_ids, results)
@@ -146,6 +166,24 @@ class IrDatasetsApprovalTest:
         from .report import write_html_report
 
         return write_html_report(dataset_id, dataset_ids, results)
+
+    @staticmethod
+    def _hf_local_context(dataset_id: str, hf_local_dir: Optional[Union[str, Path]]):
+        """A context manager resolving ``dataset_id`` against
+        ``hf_local_dir`` on disk for its duration, or a no-op context if
+        ``hf_local_dir`` is ``None``. Raises ``ValueError`` if
+        ``hf_local_dir`` is given but ``dataset_id`` isn't an ``hf:`` id.
+        """
+        if hf_local_dir is None:
+            return contextlib.nullcontext()
+        if not dataset_id.startswith("hf:"):
+            raise ValueError(
+                f"hf_local_dir was given, but {dataset_id!r} is not an 'hf:' dataset id"
+            )
+        from ir_datasets.v2 import hf_provider as hfm
+
+        repo, _revision, _fragment = hfm._parse_spec(dataset_id[len("hf:") :])
+        return local_hf_repo(repo, hf_local_dir)
 
     @staticmethod
     def _run_verifiers(dataset_id: str, recompute: bool = True) -> Dict[str, Any]:
@@ -264,7 +302,10 @@ class IrDatasetsApprovalTest:
 
 
 def verify(
-    dataset_id: str, recompute: bool = True, render_as_html: bool = False
+    dataset_id: str,
+    recompute: bool = True,
+    render_as_html: bool = False,
+    hf_local_dir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Verify a dataset identifier.
 
@@ -285,13 +326,20 @@ def verify(
     file's path is both printed and available as the result dict's
     ``"__html_report__"`` key.
 
+    If ``hf_local_dir`` is given, ``dataset_id`` must be an ``hf:`` id, and
+    it is resolved against this local directory instead of the real
+    Hugging Face Hub (see :func:`approval_tests_ir_datasets.hf_local.local_hf_repo`).
+
     Raises ``DatasetNotFoundError`` if ``dataset_id`` cannot be resolved --
     either because no such dataset exists, or because a verifier plugin's
     optional dependency (e.g. ``ir_datasets``) is not installed.
     """
     try:
         return IrDatasetsApprovalTest().verify(
-            dataset_id, recompute=recompute, render_as_html=render_as_html
+            dataset_id,
+            recompute=recompute,
+            render_as_html=render_as_html,
+            hf_local_dir=hf_local_dir,
         )
     except (KeyError, ImportError) as exc:
         raise DatasetNotFoundError(f"Dataset '{dataset_id}' does not exist.") from exc
@@ -311,5 +359,6 @@ __all__ = [
     "DatasetNotFoundError",
     "IrDatasetsApprovalTest",
     "cached_result",
+    "local_hf_repo",
     "verify",
 ]
