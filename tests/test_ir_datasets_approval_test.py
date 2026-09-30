@@ -286,3 +286,64 @@ if IR_DATASETS_AVAILABLE:
         result = IrDatasetsApprovalTest().verify("irds:cranfield-docs")
 
         assert result == {"uppercase": "IRDS:CRANFIELD-DOCS"}
+
+
+def test_verify_does_not_wait_for_approval_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        importlib.metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+    )
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("the approval server should not be started")
+
+    monkeypatch.setattr(
+        IrDatasetsApprovalTest, "_run_approval_server", staticmethod(_fail_if_called)
+    )
+
+    result = IrDatasetsApprovalTest().verify("dataset-id")
+
+    assert "__html_report__" not in result
+
+
+if IR_DATASETS_AVAILABLE:
+
+    def test_verify_stores_an_approved_snapshot_when_approved(tmp_path, monkeypatch) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        monkeypatch.setattr(
+            IrDatasetsApprovalTest, "_run_approval_server", staticmethod(lambda report_path: True)
+        )
+
+        result = IrDatasetsApprovalTest().verify("dataset-id", wait_for_approval=True)
+
+        assert "__html_report__" in result
+        approved_result_path = tmp_path / "approved" / "dataset-id" / "result.json"
+        assert approved_result_path.is_file()
+        assert json.loads(approved_result_path.read_text()) == result
+
+    def test_verify_discards_nothing_extra_when_denied(tmp_path, monkeypatch) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        monkeypatch.setattr(
+            IrDatasetsApprovalTest, "_run_approval_server", staticmethod(lambda report_path: False)
+        )
+
+        IrDatasetsApprovalTest().verify("dataset-id", wait_for_approval=True)
+
+        assert not (tmp_path / "approved").exists()
+        # The regular (unapproved) result is still persisted, as always.
+        assert (tmp_path / "approvals" / "dataset-id" / "result.json").is_file()

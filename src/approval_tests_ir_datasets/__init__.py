@@ -75,6 +75,7 @@ class IrDatasetsApprovalTest:
         recompute: bool = True,
         render_as_html: bool = False,
         hf_local_dir: Optional[Union[str, Path]] = None,
+        wait_for_approval: bool = False,
     ) -> Dict[str, Any]:
         """Run every registered verifier against ``dataset_id`` and its sub resources.
 
@@ -138,6 +139,21 @@ class IrDatasetsApprovalTest:
         (see :func:`approval_tests_ir_datasets.hf_local.local_hf_repo`) --
         useful for verifying a dataset card and data files persisted on
         disk (e.g. a test fixture) without any network access.
+
+        If ``wait_for_approval`` is ``True``, the HTML report (rendered the
+        same way as for ``render_as_html`` -- forced on if it wasn't
+        already requested) is additionally served over plain HTTP on
+        ``localhost`` (see :mod:`approval_tests_ir_datasets.approval_server`),
+        with "Approve"/"Deny" buttons appended to the bottom of the page;
+        the URL to open is printed to stdout. This call then *blocks*
+        until one of the two buttons is clicked, at which point the server
+        stops. If "Approve" was clicked, the aggregated result is stored as
+        a separate, dedicated snapshot (see
+        :func:`approval_tests_ir_datasets.paths.approved_dir`) -- distinct
+        from the ``result.json`` every call already persists, so an
+        approved snapshot is never silently overwritten by a later,
+        unapproved run; if "Deny" was clicked, nothing further is done.
+        Either way, a message describing the outcome is printed.
         """
         with self._hf_local_context(dataset_id, hf_local_dir):
             dataset_ids = self._collect_dataset_ids(dataset_id)
@@ -154,12 +170,46 @@ class IrDatasetsApprovalTest:
 
             self._persist_results(dataset_id, results)
 
-        if render_as_html:
+        if render_as_html or wait_for_approval:
             report_path = self._render_html_report(dataset_id, dataset_ids, results)
             print(f"approval_tests_ir_datasets: wrote HTML report to {report_path}")
             results["__html_report__"] = str(report_path)
 
+        if wait_for_approval:
+            approved = self._run_approval_server(report_path)
+            self._handle_approval_decision(dataset_id, results, approved)
+
         return results
+
+    @staticmethod
+    def _run_approval_server(report_path: Path) -> bool:
+        from .approval_server import run_approval_server
+
+        return run_approval_server(report_path.read_text())
+
+    @staticmethod
+    def _handle_approval_decision(dataset_id: str, results: Dict[str, Any], approved: bool) -> None:
+        """Print the outcome of a ``wait_for_approval`` decision and, if
+        ``approved``, persist ``results`` as a dedicated approved snapshot
+        (see :func:`approval_tests_ir_datasets.paths.approved_dir`) -- a
+        best-effort write, silently skipped if ``ir_datasets`` isn't
+        installed, matching :meth:`_persist_results`'s own behavior.
+        Denying does nothing beyond printing -- the already-persisted
+        ``result.json`` (see :meth:`_persist_results`) is left as is.
+        """
+        if not approved:
+            print("approval_tests_ir_datasets: denied -- results were discarded")
+            return
+        try:
+            from .paths import approved_dir
+
+            directory = approved_dir(dataset_id)
+        except ImportError:
+            print("approval_tests_ir_datasets: approved, but ir_datasets isn't installed "
+                  "-- results were not stored")
+            return
+        (directory / "result.json").write_text(json.dumps(results, indent=2, sort_keys=True))
+        print(f"approval_tests_ir_datasets: approved -- results stored in {directory}")
 
     @staticmethod
     def _render_html_report(dataset_id: str, dataset_ids: List[str], results: Dict[str, Any]):
@@ -306,6 +356,7 @@ def verify(
     recompute: bool = True,
     render_as_html: bool = False,
     hf_local_dir: Optional[Union[str, Path]] = None,
+    wait_for_approval: bool = False,
 ) -> Dict[str, Any]:
     """Verify a dataset identifier.
 
@@ -330,6 +381,12 @@ def verify(
     it is resolved against this local directory instead of the real
     Hugging Face Hub (see :func:`approval_tests_ir_datasets.hf_local.local_hf_repo`).
 
+    If ``wait_for_approval`` is ``True``, this blocks to interactively ask
+    for approval via a local HTTP server serving the HTML report with
+    "Approve"/"Deny" buttons -- see
+    :meth:`IrDatasetsApprovalTest.verify`'s docstring for the full
+    behavior (including where an approved result is stored).
+
     Raises ``DatasetNotFoundError`` if ``dataset_id`` cannot be resolved --
     either because no such dataset exists, or because a verifier plugin's
     optional dependency (e.g. ``ir_datasets``) is not installed.
@@ -340,6 +397,7 @@ def verify(
             recompute=recompute,
             render_as_html=render_as_html,
             hf_local_dir=hf_local_dir,
+            wait_for_approval=wait_for_approval,
         )
     except (KeyError, ImportError) as exc:
         raise DatasetNotFoundError(f"Dataset '{dataset_id}' does not exist.") from exc

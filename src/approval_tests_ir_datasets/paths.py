@@ -12,6 +12,15 @@ from pathlib import Path
 #: approval test results and verifier-produced artifacts are stored in.
 APPROVALS_DIR_NAME = "approvals"
 
+#: Name of the subdirectory (under ir_datasets' home directory, a sibling of
+#: ``APPROVALS_DIR_NAME``) that human-approved result snapshots are stored
+#: in (see :func:`approved_dir` and
+#: :meth:`~approval_tests_ir_datasets.IrDatasetsApprovalTest.verify`'s
+#: ``wait_for_approval`` parameter) -- kept separate from
+#: ``APPROVALS_DIR_NAME`` so an approved snapshot is never silently
+#: overwritten by a later, unapproved ``verify()`` run's own ``result.json``.
+APPROVED_DIR_NAME = "approved"
+
 _UNSAFE_PATH_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
 
 
@@ -56,7 +65,24 @@ def approvals_dir(dataset_id: str, *parts: str) -> Path:
     return directory
 
 
+def approved_dir(dataset_id: str, *parts: str) -> Path:
+    """The deterministic directory a human-approved result snapshot for
+    ``dataset_id`` is stored in (see ``APPROVED_DIR_NAME``).
+
+    Mirrors :func:`approvals_dir`, but rooted at
+    ``<ir_datasets_home>/approved`` instead of ``.../approvals``. The
+    directory (and any missing parents) is created if it doesn't already
+    exist.
+    """
+    directory = approvals_home().parent / APPROVED_DIR_NAME / sanitize_dataset_id(dataset_id)
+    for part in parts:
+        directory = directory / part
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
 __all__ = [
+    "approved_dir",
     "approvals_dir",
     "approvals_home",
     "sanitize_dataset_id",
