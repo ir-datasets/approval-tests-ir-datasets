@@ -264,6 +264,63 @@ class PyTerrierIndexVerifier:
         return properties
 
 
+class DefaultTextVerifier:
+    """Samples 2 deterministically chosen records' ``default_text()`` from
+    any ir_datasets v2 table whose records have text.
+
+    Loads ``dataset_id`` with ``ir_datasets.v2.load``. Like
+    :class:`PyTerrierIndexVerifier`, if the resolved node's record type
+    doesn't expose a ``default_text()`` method (e.g. it's a qrels table or
+    a non-table resource), ``None`` is returned -- otherwise it applies to
+    any table of texts (e.g. a document table or a query table).
+
+    Which 2 records are picked is made independent of the table's
+    iteration order (and therefore reproducible across runs/machines): each
+    record's id (its record type's first field, e.g. ``doc_id`` or
+    ``query_id``) is hashed with MD5, the records are sorted by that hash,
+    and the first 2 (in that sorted order) are kept.
+
+    Returns::
+
+        {
+            "samples": [
+                {"id": ..., "text": ...},
+                {"id": ..., "text": ...},
+            ]
+        }
+    """
+
+    #: Number of records sampled.
+    SAMPLE_SIZE = 2
+
+    def verify(self, dataset_id: str) -> Optional[Dict[str, Any]]:
+        import ir_datasets.v2 as ir_datasets_v2
+
+        node = ir_datasets_v2.load(dataset_id)
+        record_type = getattr(node, "record_type", None)
+        if record_type is None or not hasattr(record_type, "default_text"):
+            return None
+
+        id_field = record_type._fields[0]
+        sampled = self._sample(node, id_field)
+
+        return {
+            "samples": [
+                {"id": getattr(record, id_field), "text": record.default_text()}
+                for record in sampled
+            ]
+        }
+
+    @classmethod
+    def _sample(cls, node: Any, id_field: str) -> List[Any]:
+        import hashlib
+
+        def md5_of_id(record: Any) -> str:
+            return hashlib.md5(str(getattr(record, id_field)).encode("utf-8")).hexdigest()
+
+        return sorted(node, key=md5_of_id)[: cls.SAMPLE_SIZE]
+
+
 class RetrievalVerifier:
     """Runs several retrieval pipelines for an ir_datasets v2 benchmark via TIRA.
 
@@ -688,6 +745,7 @@ class EvaluationVerifier:
 
 
 __all__ = [
+    "DefaultTextVerifier",
     "EvaluationVerifier",
     "PyTerrierIndexVerifier",
     "QrelTableStatsVerifier",
