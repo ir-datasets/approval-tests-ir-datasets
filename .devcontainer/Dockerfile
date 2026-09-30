@@ -24,4 +24,8 @@ RUN pip install --no-cache-dir "coverage[toml]>=7.6" "pytest>=8.3"
 # (e.g. "ir-benchmarks/tira-ir-starter/Index (tira-ir-starter-pyterrier)") locally.
 RUN pip install --no-cache-dir "tira"
 
+# Install Jupyter, so notebooks (e.g. tutorial/example.ipynb) can be run directly
+# in the dev container.
+RUN pip install --no-cache-dir "jupyter" "ipykernel"
+
 WORKDIR /workspaces/approval-tests-ir-datasets
