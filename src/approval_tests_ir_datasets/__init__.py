@@ -130,9 +130,8 @@ class IrDatasetsApprovalTest:
         <https://ir-datasets.com>`_'s own look and feel (its Tabler-based
         CSS/JS, fetched from the same CDN/site it uses, rather than a
         vendored copy) so it looks at home next to it. The written file's
-        path is returned as the result dict's ``"__html_report__"`` key (in
-        addition to being printed to stdout for convenience) -- this key is
-        only ever present when ``render_as_html`` is ``True``.
+        path is returned as the result dict's ``"__html_report__"`` key --
+        this key is only ever present when ``render_as_html`` is ``True``.
 
         If ``hf_local_dir`` is given, ``dataset_id`` must be an ``hf:``
         (Hugging Face Hub) id, and it is resolved against this local
@@ -154,7 +153,6 @@ class IrDatasetsApprovalTest:
         from the ``result.json`` every call already persists, so an
         approved snapshot is never silently overwritten by a later,
         unapproved run; if "Deny" was clicked, nothing further is done.
-        Either way, a message describing the outcome is printed.
 
         Every call also compares the freshly computed ``results`` against a
         previously approved snapshot for ``dataset_id``, if one exists (see
@@ -164,14 +162,22 @@ class IrDatasetsApprovalTest:
         and strings must match exactly, floats match within a small
         absolute tolerance (see :mod:`approval_tests_ir_datasets.comparison`),
         and dicts/lists are compared recursively. If no approved snapshot
-        exists yet, this is a no-op beyond an informational print -- in
-        particular, ``results`` is *not* modified, so first-time callers
+        exists yet, ``results`` is *not* modified, so first-time callers
         (and every existing test, none of which pre-seed an approved
         snapshot) are unaffected. If one exists, ``results`` gains a
         ``"__approval_comparison__"`` key (``{"matches": bool,
         "differences": [...]}``, see
-        :func:`approval_tests_ir_datasets.comparison.compare_results`), and
-        a message is printed describing whether it matched.
+        :func:`approval_tests_ir_datasets.comparison.compare_results`).
+
+        Before returning, a short, human-friendly summary is printed to
+        stdout: how many verifiers ran across how many resources, where
+        the HTML report was written (if any), whether results matched the
+        approved snapshot (if any), and the outcome of an approval
+        decision (if ``wait_for_approval`` was used) -- each as a single
+        check-mark/cross-mark-prefixed line. This summary deliberately
+        omits each verifier's own raw output and the full list of
+        approval differences (both remain available on the returned dict)
+        to stay readable; see :meth:`_print_summary`.
         """
         with self._hf_local_context(dataset_id, hf_local_dir):
             dataset_ids = self._collect_dataset_ids(dataset_id)
@@ -190,14 +196,17 @@ class IrDatasetsApprovalTest:
 
         self._compare_to_approved(dataset_id, results)
 
+        report_path = None
         if render_as_html or wait_for_approval:
             report_path = self._render_html_report(dataset_id, dataset_ids, results)
-            print(f"approval_tests_ir_datasets: wrote HTML report to {report_path}")
             results["__html_report__"] = str(report_path)
 
+        approval_status = None
         if wait_for_approval:
             approved = self._run_approval_server(report_path)
-            self._handle_approval_decision(dataset_id, results, approved)
+            approval_status = self._handle_approval_decision(dataset_id, results, approved)
+
+        self._print_summary(dataset_id, dataset_ids, results, report_path, approval_status)
 
         return results
 
@@ -219,35 +228,95 @@ class IrDatasetsApprovalTest:
         }
 
     @staticmethod
+    def _print_summary(
+        dataset_id: str,
+        dataset_ids: List[str],
+        results: Dict[str, Any],
+        report_path: Optional[Path],
+        approval_status: Optional[str],
+    ) -> None:
+        """Print one compact, human-friendly overview of a :meth:`verify`
+        call -- a handful of check-mark/cross-mark-prefixed bullet lines
+        (how many verifiers ran, where the HTML report went, whether
+        results matched a previously approved snapshot, and the outcome of
+        an approval decision). Deliberately omits each verifier's own raw
+        output (e.g. computed statistics, sample documents, ...) and the
+        full list of approval differences -- both remain available on the
+        returned dict (``results`` itself, and
+        ``results["__approval_comparison__"]["differences"]``) for anyone
+        who wants the detail, but would just be noise here.
+        """
+        stripped = IrDatasetsApprovalTest._strip_bookkeeping_keys(results)
+        if len(dataset_ids) == 1:
+            verifier_count = len(stripped)
+        else:
+            verifier_count = sum(
+                len(sub_results)
+                for key, sub_results in stripped.items()
+                if key in dataset_ids and isinstance(sub_results, dict)
+            )
+        resource_count = len(dataset_ids)
+
+        lines = [
+            f"✅ {verifier_count} "
+            f"{'verifier' if verifier_count == 1 else 'verifiers'} ran across "
+            f"{resource_count} {'resource' if resource_count == 1 else 'resources'}"
+        ]
+        if report_path is not None:
+            lines.append(f"📄 HTML report: {report_path}")
+
+        comparison = results.get("__approval_comparison__")
+        if comparison is None:
+            lines.append("ℹ️  no approved snapshot yet -- nothing to compare against")
+        elif comparison["matches"]:
+            lines.append("✅ matches the approved snapshot")
+        else:
+            count = len(comparison["differences"])
+            lines.append(
+                f"❌ differs from the approved snapshot ({count} "
+                f"{'difference' if count == 1 else 'differences'} -- see "
+                "result['__approval_comparison__']['differences'])"
+            )
+
+        if approval_status is not None:
+            lines.append(approval_status)
+
+        border = "─" * 60
+        print(border)
+        print(f" {dataset_id}")
+        print(border)
+        for line in lines:
+            print(f" {line}")
+        print(border)
+
+    @staticmethod
     def _run_approval_server(report_path: Path) -> bool:
         from .approval_server import run_approval_server
 
         return run_approval_server(report_path.read_text())
 
     @staticmethod
-    def _handle_approval_decision(dataset_id: str, results: Dict[str, Any], approved: bool) -> None:
-        """Print the outcome of a ``wait_for_approval`` decision and, if
-        ``approved``, persist ``results`` as a dedicated approved snapshot
-        (see :func:`approval_tests_ir_datasets.paths.approved_dir`) -- a
-        best-effort write, silently skipped if ``ir_datasets`` isn't
+    def _handle_approval_decision(dataset_id: str, results: Dict[str, Any], approved: bool) -> str:
+        """Persist ``results`` as a dedicated approved snapshot if
+        ``approved`` (see :func:`approval_tests_ir_datasets.paths.approved_dir`)
+        -- a best-effort write, silently skipped if ``ir_datasets`` isn't
         installed, matching :meth:`_persist_results`'s own behavior.
-        Denying does nothing beyond printing -- the already-persisted
+        Denying does nothing beyond that -- the already-persisted
         ``result.json`` (see :meth:`_persist_results`) is left as is.
+        Returns a one-line, check-mark/cross-mark-prefixed status message
+        describing the outcome, for :meth:`_print_summary` to include.
         """
         if not approved:
-            print("approval_tests_ir_datasets: denied -- results were discarded")
-            return
+            return "❌ denied -- results were discarded"
         try:
             from .paths import approved_dir
 
             directory = approved_dir(dataset_id)
         except ImportError:
-            print("approval_tests_ir_datasets: approved, but ir_datasets isn't installed "
-                  "-- results were not stored")
-            return
+            return "⚠️  approved, but ir_datasets isn't installed -- results were not stored"
         stored_results = IrDatasetsApprovalTest._strip_bookkeeping_keys(results)
         (directory / "result.json").write_text(json.dumps(stored_results, indent=2, sort_keys=True))
-        print(f"approval_tests_ir_datasets: approved -- results stored in {directory}")
+        return f"✅ approved -- snapshot stored in {directory}"
 
     @staticmethod
     def _render_html_report(dataset_id: str, dataset_ids: List[str], results: Dict[str, Any]):
@@ -379,36 +448,22 @@ class IrDatasetsApprovalTest:
         """Compare ``results`` against ``dataset_id``'s approved snapshot
         (see :meth:`cached_approved_result`), if one exists.
 
-        Does nothing (beyond an informational print) if no snapshot has
-        been approved yet -- in particular, ``results`` is left untouched,
-        so callers with no approved snapshot (e.g. every existing test)
-        are unaffected. Otherwise, attaches the comparison (see
+        Does nothing if no snapshot has been approved yet -- in
+        particular, ``results`` is left untouched, so callers with no
+        approved snapshot (e.g. every existing test) are unaffected.
+        Otherwise, attaches the comparison (see
         :func:`approval_tests_ir_datasets.comparison.compare_results`) to
-        ``results["__approval_comparison__"]`` and prints a message
-        describing whether it matched (and, if not, every difference
-        found).
+        ``results["__approval_comparison__"]``; :meth:`_print_summary`
+        reports the outcome (matched / how many differences) to the user.
         """
         approved = IrDatasetsApprovalTest.cached_approved_result(dataset_id)
         if approved is None:
-            print(
-                f"approval_tests_ir_datasets: no approved result for {dataset_id!r} yet "
-                "-- nothing to compare against"
-            )
             return
         comparison = compare_results(
             IrDatasetsApprovalTest._strip_bookkeeping_keys(approved),
             IrDatasetsApprovalTest._strip_bookkeeping_keys(results),
         )
         results["__approval_comparison__"] = comparison
-        if comparison["matches"]:
-            print(f"approval_tests_ir_datasets: results match the approved snapshot for {dataset_id!r}")
-        else:
-            print(
-                f"approval_tests_ir_datasets: results differ from the approved snapshot for "
-                f"{dataset_id!r}:"
-            )
-            for difference in comparison["differences"]:
-                print(f"  - {difference}")
 
     @staticmethod
     def cached_result(dataset_id: str) -> Optional[Dict[str, Any]]:

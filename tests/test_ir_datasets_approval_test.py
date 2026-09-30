@@ -395,7 +395,7 @@ if IR_DATASETS_AVAILABLE:
         result = IrDatasetsApprovalTest().verify("dataset-id")
 
         assert result["__approval_comparison__"] == {"matches": True, "differences": []}
-        assert "results match the approved snapshot" in capsys.readouterr().out
+        assert "matches the approved snapshot" in capsys.readouterr().out
 
     def test_verify_excludes_html_report_path_from_the_comparison(
         tmp_path, monkeypatch
@@ -443,8 +443,12 @@ if IR_DATASETS_AVAILABLE:
         assert len(comparison["differences"]) == 1
         assert "uppercase" in comparison["differences"][0]
         printed = capsys.readouterr().out
-        assert "results differ from the approved snapshot" in printed
-        assert comparison["differences"][0] in printed
+        # The summary reports only that (and how many) differences were
+        # found, not their full text -- the detail stays on the returned
+        # dict for anyone who wants it.
+        assert "differs from the approved snapshot" in printed
+        assert "1 difference" in printed
+        assert comparison["differences"][0] not in printed
 
     def test_verify_tolerates_small_float_differences_against_an_approved_snapshot(
         tmp_path, monkeypatch
