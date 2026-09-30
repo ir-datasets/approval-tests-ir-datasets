@@ -327,7 +327,13 @@ if IR_DATASETS_AVAILABLE:
         assert "__html_report__" in result
         approved_result_path = tmp_path / "approved" / "dataset-id" / "result.json"
         assert approved_result_path.is_file()
-        assert json.loads(approved_result_path.read_text()) == result
+        # The stored snapshot excludes bookkeeping keys (e.g. the HTML
+        # report's path, which is a fresh temp-directory path on every run
+        # and thus would never match a previous approval) -- only the
+        # actual verifier output is approved.
+        stored = json.loads(approved_result_path.read_text())
+        assert "__html_report__" not in stored
+        assert stored == {"uppercase": "DATASET-ID"}
 
     def test_verify_discards_nothing_extra_when_denied(tmp_path, monkeypatch) -> None:
         import ir_datasets
@@ -390,6 +396,32 @@ if IR_DATASETS_AVAILABLE:
 
         assert result["__approval_comparison__"] == {"matches": True, "differences": []}
         assert "results match the approved snapshot" in capsys.readouterr().out
+
+    def test_verify_excludes_html_report_path_from_the_comparison(
+        tmp_path, monkeypatch
+    ) -> None:
+        # The HTML report is written to a fresh temp directory on every
+        # run, so its path would never match a previously approved one --
+        # it must not be treated as a verifier result to compare/approve.
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        # Simulate a stale approved snapshot from before bookkeeping keys
+        # were excluded, which still has its own (now stale) report path.
+        _seed_approved_result(
+            tmp_path,
+            "dataset-id",
+            {"uppercase": "DATASET-ID", "__html_report__": "/tmp/old-report.html"},
+        )
+
+        result = IrDatasetsApprovalTest().verify("dataset-id", render_as_html=True)
+
+        assert result["__approval_comparison__"] == {"matches": True, "differences": []}
 
     def test_verify_reports_differences_against_a_differing_approved_snapshot(
         tmp_path, monkeypatch, capsys

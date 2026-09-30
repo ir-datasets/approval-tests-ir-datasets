@@ -201,6 +201,23 @@ class IrDatasetsApprovalTest:
 
         return results
 
+    #: Keys `verify()` adds to `results` itself for bookkeeping/reporting
+    #: purposes (e.g. where the HTML report was written to, or the outcome
+    #: of comparing against a previously approved snapshot) rather than as
+    #: actual verifier output -- excluded from what's persisted as an
+    #: approved snapshot, and from what's compared against one (see
+    #: `_strip_bookkeeping_keys`), since neither is part of "the results" a
+    #: human is meant to approve.
+    _BOOKKEEPING_KEYS = ("__html_report__", "__approval_comparison__")
+
+    @staticmethod
+    def _strip_bookkeeping_keys(results: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            key: value
+            for key, value in results.items()
+            if key not in IrDatasetsApprovalTest._BOOKKEEPING_KEYS
+        }
+
     @staticmethod
     def _run_approval_server(report_path: Path) -> bool:
         from .approval_server import run_approval_server
@@ -228,7 +245,8 @@ class IrDatasetsApprovalTest:
             print("approval_tests_ir_datasets: approved, but ir_datasets isn't installed "
                   "-- results were not stored")
             return
-        (directory / "result.json").write_text(json.dumps(results, indent=2, sort_keys=True))
+        stored_results = IrDatasetsApprovalTest._strip_bookkeeping_keys(results)
+        (directory / "result.json").write_text(json.dumps(stored_results, indent=2, sort_keys=True))
         print(f"approval_tests_ir_datasets: approved -- results stored in {directory}")
 
     @staticmethod
@@ -377,7 +395,10 @@ class IrDatasetsApprovalTest:
                 "-- nothing to compare against"
             )
             return
-        comparison = compare_results(approved, results)
+        comparison = compare_results(
+            IrDatasetsApprovalTest._strip_bookkeeping_keys(approved),
+            IrDatasetsApprovalTest._strip_bookkeeping_keys(results),
+        )
         results["__approval_comparison__"] = comparison
         if comparison["matches"]:
             print(f"approval_tests_ir_datasets: results match the approved snapshot for {dataset_id!r}")
