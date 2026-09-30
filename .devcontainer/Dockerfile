@@ -28,4 +28,8 @@ RUN pip install --no-cache-dir "tira"
 # in the dev container.
 RUN pip install --no-cache-dir "jupyter" "ipykernel"
 
+# Install ir_measures, used by EvaluationVerifier to compute nDCG@10, recip_rank
+# and Recall@100 for RetrievalVerifier's cached runs against a dataset's qrels.
+RUN pip install --no-cache-dir "ir_measures"
+
 WORKDIR /workspaces/approval-tests-ir-datasets

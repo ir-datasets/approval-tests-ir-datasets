@@ -533,7 +533,82 @@ class RetrievalVerifier:
         return num_queries
 
 
+class EvaluationVerifier:
+    """Evaluates :class:`RetrievalVerifier`'s cached runs against qrels.
+
+    Loads ``dataset_id`` with ``ir_datasets.v2.load``. If the resolved node
+    doesn't have a document table, a query table, *and* a qrels table (e.g.
+    it's just a bare ``DocTable``/``QueryTable``, or a benchmark without
+    qrels), ``None`` is returned.
+
+    Otherwise, :class:`RetrievalVerifier` is run (from scratch, like
+    :class:`RetrievalVerifier` itself does for :class:`PyTerrierIndexVerifier`
+    -- registered verifiers don't rely on each other's iteration order, see
+    ``pyproject.toml``'s alphabetically-sorted verifier entry points) to
+    (re)populate its cached runs, and each of its :attr:`~RetrievalVerifier.APPROACHES`'
+    run files is then looked up via :meth:`RetrievalVerifier.cached_run_path`.
+
+    Each cached run is evaluated against ``dataset_id``'s qrels using
+    ``ir_measures`` for nDCG@10, recip_rank (mean reciprocal rank) and
+    Recall@100. Returns::
+
+        {
+            "BM25": {"nDCG@10": ..., "recip_rank": ..., "Recall@100": ...},
+            "DirichletLM": {...},
+            "DPH": {...},
+            "Hiemstra_LM": {...},
+            "PL2": {...},
+        }
+
+    This requires the optional ``ir_measures`` package.
+    """
+
+    #: The metrics reported for every run, keyed by their result dict key.
+    MEASURES = {"nDCG@10": "nDCG@10", "recip_rank": "RR", "Recall@100": "Recall@100"}
+
+    def verify(self, dataset_id: str) -> Optional[Dict[str, Any]]:
+        import ir_datasets.v2 as ir_datasets_v2
+
+        node = ir_datasets_v2.load(dataset_id)
+        has = getattr(node, "has", None)
+        if not callable(has) or not (has("docs") and has("queries") and has("qrels")):
+            return None
+
+        return self._evaluate(node, dataset_id)
+
+    def _evaluate(self, node: Any, dataset_id: str) -> Dict[str, Any]:
+        import ir_measures
+
+        # Always (re)run retrieval from scratch, consistent with the
+        # top-level contract that every verify() call recomputes its
+        # result -- mirrors how RetrievalVerifier itself always rebuilds
+        # PyTerrierIndexVerifier's index rather than relying on it having
+        # already been (freshly) built by another verifier's turn.
+        RetrievalVerifier().verify(dataset_id)
+
+        qrels = list(node.qrels)
+        measures = [ir_measures.parse_measure(measure) for measure in self.MEASURES.values()]
+
+        results: Dict[str, Any] = {}
+        for approach in RetrievalVerifier.APPROACHES:
+            name = RetrievalVerifier._approach_name(approach)
+            run_path = RetrievalVerifier.cached_run_path(dataset_id, approach)
+            if run_path is None:
+                raise RuntimeError(
+                    f"RetrievalVerifier did not produce a cached run for approach "
+                    f"'{name}' on '{dataset_id}'."
+                )
+            run = ir_measures.read_trec_run(str(run_path))
+            aggregate = ir_measures.calc_aggregate(measures, qrels, run)
+            results[name] = {
+                metric_name: aggregate[ir_measures.parse_measure(measure_str)]
+                for metric_name, measure_str in self.MEASURES.items()
+            }
+        return results
+
+
 __all__ = [
+    "EvaluationVerifier",
     "PyTerrierIndexVerifier",
     "QrelTableStatsVerifier",
     "RetrievalVerifier",
