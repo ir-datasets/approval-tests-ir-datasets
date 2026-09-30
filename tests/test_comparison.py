@@ -5,8 +5,10 @@ within a small absolute tolerance, and dicts/lists recurse.
 """
 from approval_tests_ir_datasets.comparison import (
     FLOAT_ABS_TOLERANCE,
+    MISSING,
     compare_results,
     diff,
+    diff_details,
     values_match,
 )
 
@@ -213,3 +215,46 @@ class TestCompareResults:
         result = compare_results(approved, actual)
         assert result["matches"] is False
         assert "table_line_count.length" in result["differences"][0]
+
+
+class TestDiffDetails:
+    def test_matching_values_have_no_details(self) -> None:
+        assert diff_details({"length": 10}, {"length": 10}) == []
+
+    def test_leaf_mismatch_carries_both_raw_values(self) -> None:
+        details = diff_details({"length": 10}, {"length": 11})
+        assert details == [{"path": "length", "kind": "leaf", "approved": 10, "actual": 11}]
+
+    def test_leaf_mismatch_at_the_root_uses_root_placeholder_path(self) -> None:
+        assert diff_details(10, 11) == [{"path": "<root>", "kind": "leaf", "approved": 10, "actual": 11}]
+
+    def test_missing_key_reports_missing_sentinel_as_the_actual_side(self) -> None:
+        details = diff_details({"a": 1}, {})
+        assert details == [{"path": "a", "kind": "missing_key", "approved": 1, "actual": MISSING}]
+
+    def test_unexpected_key_reports_missing_sentinel_as_the_approved_side(self) -> None:
+        details = diff_details({}, {"a": 1})
+        assert details == [{"path": "a", "kind": "unexpected_key", "approved": MISSING, "actual": 1}]
+
+    def test_length_mismatch_reports_both_lengths_at_the_list_s_own_path(self) -> None:
+        details = diff_details({"items": [1, 2]}, {"items": [1, 2, 3]})
+        assert details == [{"path": "items", "kind": "length_mismatch", "approved": 2, "actual": 3}]
+
+    def test_nested_leaf_mismatch_reports_full_dotted_path(self) -> None:
+        approved = {"qrel_stats": {"relevance_counts": {"0": 3, "1": 5}}}
+        actual = {"qrel_stats": {"relevance_counts": {"0": 3, "1": 6}}}
+        details = diff_details(approved, actual)
+        assert details == [
+            {"path": "qrel_stats.relevance_counts.1", "kind": "leaf", "approved": 5, "actual": 6}
+        ]
+
+    def test_list_item_mismatch_reports_indexed_path(self) -> None:
+        details = diff_details({"items": [1, 2]}, {"items": [1, 9]})
+        assert details == [{"path": "items[1]", "kind": "leaf", "approved": 2, "actual": 9}]
+
+    def test_diff_messages_are_derived_from_diff_details(self) -> None:
+        approved = {"a": 1, "b": [1, 2]}
+        actual = {"a": 2, "b": [1, 2, 3]}
+        messages = diff(approved, actual)
+        details = diff_details(approved, actual)
+        assert len(messages) == len(details) == 2

@@ -547,6 +547,70 @@ if IR_DATASETS_AVAILABLE:
 
         assert result["__approval_comparison__"] == {"matches": True, "differences": []}
 
+    def test_verify_html_report_highlights_differences_when_waiting_for_approval(
+        tmp_path, monkeypatch
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        monkeypatch.setattr(
+            IrDatasetsApprovalTest, "_run_approval_server", staticmethod(lambda report_path: False)
+        )
+        _seed_approved_result(tmp_path, "dataset-id", {"uppercase": "SOMETHING-ELSE"})
+
+        result = IrDatasetsApprovalTest().verify("dataset-id", wait_for_approval=True)
+
+        report_html = Path(result["__html_report__"]).read_text()
+        assert "table-danger" in report_html
+        assert "re-execution" in report_html
+        assert "approved" in report_html
+        assert "SOMETHING-ELSE" in report_html
+        assert "DATASET-ID" in report_html
+
+    def test_verify_html_report_has_no_diff_highlighting_when_results_match(
+        tmp_path, monkeypatch
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        monkeypatch.setattr(
+            IrDatasetsApprovalTest, "_run_approval_server", staticmethod(lambda report_path: False)
+        )
+        _seed_approved_result(tmp_path, "dataset-id", {"uppercase": "DATASET-ID"})
+
+        result = IrDatasetsApprovalTest().verify("dataset-id", wait_for_approval=True)
+
+        report_html = Path(result["__html_report__"]).read_text()
+        assert "table-danger" not in report_html
+
+    def test_verify_html_report_has_no_diff_highlighting_without_wait_for_approval(
+        tmp_path, monkeypatch
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+        _seed_approved_result(tmp_path, "dataset-id", {"uppercase": "SOMETHING-ELSE"})
+
+        result = IrDatasetsApprovalTest().verify("dataset-id", render_as_html=True)
+
+        report_html = Path(result["__html_report__"]).read_text()
+        assert "table-danger" not in report_html
+
     def test_cached_approved_result_returns_none_when_nothing_was_approved(
         tmp_path, monkeypatch
     ) -> None:

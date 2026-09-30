@@ -14,7 +14,9 @@ without vendoring any of its template files.
 import json
 from html import escape
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+from .comparison import MISSING, diff_details, values_match
 
 #: Base URL ir-datasets.com's own static assets are fetched from, so the
 #: report visually matches https://demo-v2.ir-datasets.com/ without
@@ -140,6 +142,37 @@ def _render_fallback(result: Any) -> str:
     return f'<pre class="bg-dark-lt rounded p-2 mb-0 overflow-auto">{escape(json.dumps(result, indent=2, sort_keys=True))}</pre>'
 
 
+def _format_diff_value(value: Any) -> str:
+    if value is MISSING:
+        return '<span class="text-white-50">(absent)</span>'
+    if isinstance(value, (dict, list)):
+        return f'<pre class="bg-dark-lt rounded p-2 mb-0 overflow-auto">{escape(json.dumps(value, indent=2, sort_keys=True))}</pre>'
+    return escape(str(value))
+
+
+def _render_diff_table(differences: List[Dict[str, Any]]) -> str:
+    """A small table with one *pair* of rows per entry in ``differences``
+    (as returned by :func:`~approval_tests_ir_datasets.comparison.diff_details`)
+    -- a "re-execution" row and an "approved" row, both styled red -- so a
+    reviewer can see exactly which value changed, and from/to what.
+    """
+    rows = []
+    for detail in differences:
+        label = escape(detail["path"])
+        for side, value in (("re-execution", detail["actual"]), ("approved", detail["approved"])):
+            rows.append(
+                '<tr class="table-danger">'
+                f'<td class="text-danger w-1">{label} '
+                f'<span class="badge bg-red text-white ms-1">{side}</span></td>'
+                f'<td class="text-danger">{_format_diff_value(value)}</td>'
+                "</tr>"
+            )
+    return (
+        '<div class="table-responsive mt-2"><table class="table table-vcenter card-table">'
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
 #: Dispatch table from a verifier's entry point name (see
 #: ``_VERIFIER_TITLES``) to a function rendering its result as an HTML
 #: fragment. Verifiers without a dedicated renderer here fall back to
@@ -154,7 +187,9 @@ _VERIFIER_RENDERERS = {
 }
 
 
-def _render_dataset_section(dataset_id: str, flat_result: Dict[str, Any]) -> str:
+def _render_dataset_section(
+    dataset_id: str, flat_result: Dict[str, Any], approved_flat: Optional[Dict[str, Any]] = None
+) -> str:
     cards = []
     for verifier_name, result in flat_result.items():
         renderer = _VERIFIER_RENDERERS.get(verifier_name, _render_fallback)
@@ -162,6 +197,19 @@ def _render_dataset_section(dataset_id: str, flat_result: Dict[str, Any]) -> str
             body_html = renderer(result)
         except Exception:  # pragma: no cover - defensive, falls back to raw JSON
             body_html = _render_fallback(result)
+
+        if approved_flat is not None and verifier_name in approved_flat:
+            approved_value = approved_flat[verifier_name]
+            if not values_match(approved_value, result):
+                differences = diff_details(approved_value, result)
+                if differences:
+                    body_html += (
+                        '<div class="mt-3">'
+                        '<div class="text-danger fw-bold mb-1">'
+                        "&#9888; Differs from the approved snapshot"
+                        "</div>" + _render_diff_table(differences) + "</div>"
+                    )
+
         title = _VERIFIER_TITLES.get(verifier_name, verifier_name)
         cards.append(_card(title, body_html))
 
@@ -173,7 +221,10 @@ def _render_dataset_section(dataset_id: str, flat_result: Dict[str, Any]) -> str
 
 
 def render_html_report(
-    root_dataset_id: str, dataset_ids: List[str], results: Dict[str, Any]
+    root_dataset_id: str,
+    dataset_ids: List[str],
+    results: Dict[str, Any],
+    approved_results: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Render ``results`` (as produced by
     :meth:`~approval_tests_ir_datasets.IrDatasetsApprovalTest.verify`) as a
@@ -185,15 +236,36 @@ def render_html_report(
     benchmark's aggregated result (see ``verify``'s docstring for the
     corresponding two result shapes) -- so this doesn't need to guess which
     shape ``results`` is in.
+
+    ``approved_results``, if given, is the previously approved snapshot in
+    the same shape as ``results`` (see ``verify``'s ``wait_for_approval``):
+    when a verifier's freshly computed value differs from its approved
+    counterpart, the report highlights that difference inline (a red
+    "re-execution" vs. "approved" row pair per differing value) instead of
+    silently rendering only the new value.
     """
     if len(dataset_ids) == 1:
         sections = "".join(
-            _render_dataset_section(dataset_id, results) for dataset_id in dataset_ids
+            _render_dataset_section(dataset_id, results, approved_results)
+            for dataset_id in dataset_ids
         )
     else:
         sections = "".join(
-            _render_dataset_section(dataset_id, results.get(dataset_id, {}))
+            _render_dataset_section(
+                dataset_id,
+                results.get(dataset_id, {}),
+                (approved_results or {}).get(dataset_id) if approved_results is not None else None,
+            )
             for dataset_id in dataset_ids
+        )
+
+    banner = ""
+    if approved_results is not None and not values_match(approved_results, results):
+        banner = (
+            '<div class="alert alert-danger mt-3" role="alert">'
+            "&#9888; These results differ from the previously approved snapshot &mdash; "
+            "the differing values are highlighted below."
+            "</div>"
         )
 
     return f"""<!doctype html>
@@ -223,6 +295,7 @@ def render_html_report(
         <div class="row row-cards">
           <div class="col-12">
             <h1>Approval test report: <code>{escape(root_dataset_id)}</code></h1>
+            {banner}
             {sections}
           </div>
         </div>
@@ -237,7 +310,10 @@ def render_html_report(
 
 
 def write_html_report(
-    root_dataset_id: str, dataset_ids: List[str], results: Dict[str, Any]
+    root_dataset_id: str,
+    dataset_ids: List[str],
+    results: Dict[str, Any],
+    approved_results: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Render ``results`` via :func:`render_html_report` and write it as
     ``report.html`` to a freshly created temporary directory, returning
@@ -249,7 +325,7 @@ def write_html_report(
 
     directory = Path(tempfile.mkdtemp(prefix="approval_tests_ir_datasets_"))
     report_path = directory / f"{sanitize_dataset_id(root_dataset_id)}.html"
-    report_path.write_text(render_html_report(root_dataset_id, dataset_ids, results))
+    report_path.write_text(render_html_report(root_dataset_id, dataset_ids, results, approved_results))
     return report_path
 
 

@@ -30,6 +30,12 @@ from typing import Any, Dict, List
 #: -- see the module docstring.
 FLOAT_ABS_TOLERANCE = 0.0001
 
+#: Sentinel used by :func:`diff_details` to mark a side of a difference as
+#: absent (e.g. a key that only exists on the approved -- or only on the
+#: actual -- side), since ``None`` is itself a valid, distinct value a
+#: verifier result could legitimately hold.
+MISSING = object()
+
 
 def values_match(approved: Any, actual: Any) -> bool:
     """Whether ``actual`` matches ``approved``, per this module's own,
@@ -51,6 +57,51 @@ def values_match(approved: Any, actual: Any) -> bool:
     return approved == actual
 
 
+def diff_details(approved: Any, actual: Any, path: str = "") -> List[Dict[str, Any]]:
+    """The same differences as :func:`diff`, but structured rather than
+    pre-formatted: each entry is ``{"path": str, "kind": str, "approved":
+    ..., "actual": ...}``, where ``kind`` is one of ``"leaf"``,
+    ``"missing_key"``, ``"unexpected_key"`` or ``"length_mismatch"``, and
+    the absent side of a ``"missing_key"``/``"unexpected_key"`` entry is
+    :data:`MISSING`. :func:`diff` is itself just this function's entries
+    rendered as human-readable strings -- use this one instead when you
+    need the actual values (e.g. to render a rich HTML diff) rather than a
+    message.
+    """
+    if isinstance(approved, dict) and isinstance(actual, dict):
+        details = []
+        for key in sorted(set(approved) | set(actual), key=str):
+            child_path = f"{path}.{key}" if path else str(key)
+            if key not in approved:
+                details.append(
+                    {"path": child_path, "kind": "unexpected_key", "approved": MISSING, "actual": actual[key]}
+                )
+            elif key not in actual:
+                details.append(
+                    {"path": child_path, "kind": "missing_key", "approved": approved[key], "actual": MISSING}
+                )
+            else:
+                details.extend(diff_details(approved[key], actual[key], child_path))
+        return details
+    if isinstance(approved, list) and isinstance(actual, list):
+        details = []
+        if len(approved) != len(actual):
+            details.append(
+                {
+                    "path": path or "<root>",
+                    "kind": "length_mismatch",
+                    "approved": len(approved),
+                    "actual": len(actual),
+                }
+            )
+        for index, (approved_item, actual_item) in enumerate(zip(approved, actual)):
+            details.extend(diff_details(approved_item, actual_item, f"{path}[{index}]"))
+        return details
+    if values_match(approved, actual):
+        return []
+    return [{"path": path or "<root>", "kind": "leaf", "approved": approved, "actual": actual}]
+
+
 def diff(approved: Any, actual: Any, path: str = "") -> List[str]:
     """Every difference between ``approved`` and ``actual``, as human-
     readable, ``path``-prefixed messages (e.g.
@@ -58,30 +109,19 @@ def diff(approved: Any, actual: Any, path: str = "") -> List[str]:
     match (per :func:`values_match`). Recurses into matching dict/list
     structure; anything else is compared as one leaf value.
     """
-    label = path or "<root>"
-    if isinstance(approved, dict) and isinstance(actual, dict):
-        differences = []
-        for key in sorted(set(approved) | set(actual), key=str):
-            child_path = f"{path}.{key}" if path else str(key)
-            if key not in approved:
-                differences.append(f"{child_path}: unexpected key (got {actual[key]!r})")
-            elif key not in actual:
-                differences.append(f"{child_path}: missing key (expected {approved[key]!r})")
-            else:
-                differences.extend(diff(approved[key], actual[key], child_path))
-        return differences
-    if isinstance(approved, list) and isinstance(actual, list):
-        differences = []
-        if len(approved) != len(actual):
-            differences.append(
-                f"{label}: length differs (expected {len(approved)}, got {len(actual)})"
+    messages = []
+    for detail in diff_details(approved, actual, path):
+        if detail["kind"] == "unexpected_key":
+            messages.append(f"{detail['path']}: unexpected key (got {detail['actual']!r})")
+        elif detail["kind"] == "missing_key":
+            messages.append(f"{detail['path']}: missing key (expected {detail['approved']!r})")
+        elif detail["kind"] == "length_mismatch":
+            messages.append(
+                f"{detail['path']}: length differs (expected {detail['approved']!r}, got {detail['actual']!r})"
             )
-        for index, (approved_item, actual_item) in enumerate(zip(approved, actual)):
-            differences.extend(diff(approved_item, actual_item, f"{path}[{index}]"))
-        return differences
-    if values_match(approved, actual):
-        return []
-    return [f"{label}: expected {approved!r}, got {actual!r}"]
+        else:
+            messages.append(f"{detail['path']}: expected {detail['approved']!r}, got {detail['actual']!r}")
+    return messages
 
 
 def compare_results(approved: Any, actual: Any) -> Dict[str, Any]:
@@ -94,4 +134,4 @@ def compare_results(approved: Any, actual: Any) -> Dict[str, Any]:
     return {"matches": not differences, "differences": differences}
 
 
-__all__ = ["FLOAT_ABS_TOLERANCE", "compare_results", "diff", "values_match"]
+__all__ = ["FLOAT_ABS_TOLERANCE", "MISSING", "compare_results", "diff", "diff_details", "values_match"]

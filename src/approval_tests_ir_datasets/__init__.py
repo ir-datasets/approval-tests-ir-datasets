@@ -203,7 +203,12 @@ class IrDatasetsApprovalTest:
 
         report_path = None
         if render_as_html or wait_for_approval:
-            report_path = self._render_html_report(dataset_id, dataset_ids, results)
+            approved_for_report = None
+            if wait_for_approval:
+                approved_for_report = self.cached_approved_result(dataset_id)
+            report_path = self._render_html_report(
+                dataset_id, dataset_ids, self._strip_bookkeeping_keys(results), approved_for_report
+            )
             results["__html_report__"] = str(report_path)
 
         approval_status = None
@@ -376,10 +381,15 @@ class IrDatasetsApprovalTest:
         return f"✅ approved -- snapshot stored in {directory}"
 
     @staticmethod
-    def _render_html_report(dataset_id: str, dataset_ids: List[str], results: Dict[str, Any]):
+    def _render_html_report(
+        dataset_id: str,
+        dataset_ids: List[str],
+        results: Dict[str, Any],
+        approved_results: Optional[Dict[str, Any]] = None,
+    ):
         from .report import write_html_report
 
-        return write_html_report(dataset_id, dataset_ids, results)
+        return write_html_report(dataset_id, dataset_ids, results, approved_results)
 
     @staticmethod
     def _hf_local_context(dataset_id: str, hf_local_dir: Optional[Union[str, Path]]):
