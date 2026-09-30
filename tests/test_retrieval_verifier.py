@@ -1,5 +1,8 @@
 import shutil
+import sys
 import unittest
+
+import pytest
 
 try:
     import ir_datasets.v2  # noqa: F401
@@ -134,3 +137,87 @@ class JaccardSimilarityTest(unittest.TestCase):
         similarity = RetrievalVerifier._jaccard_similarity(run_a, run_b, k=10)
 
         self.assertEqual(similarity, 0.5)
+
+
+class _FakeLocalExecution:
+    def __init__(self, side_effect=None, produce_run_file=True):
+        self.side_effect = side_effect
+        self.produce_run_file = produce_run_file
+
+    def run(self, image, command, input_dir, output_dir, input_run, allow_network, forward_environment_variables):
+        print("noisy stdout from the tira client / docker container")
+        print("noisy stderr from the tira client / docker container", file=sys.stderr)
+        if self.side_effect is not None:
+            raise self.side_effect
+        if self.produce_run_file:
+            (output_dir / "run.txt").write_text("q1 Q0 d1 1 1.0 tag\n")
+
+
+class _FakeClient:
+    def __init__(self, **local_execution_kwargs):
+        self.local_execution = _FakeLocalExecution(**local_execution_kwargs)
+
+    def public_system_details(self, team, software):
+        print("noisy output while fetching system details")
+        return {"command": "some-command", "tira_image_name": "some-image"}
+
+
+APPROACH = "team/task/Foo (some-image)"
+
+
+def test_run_approach_suppresses_output_on_success(tmp_path, capsys) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    run_path = RetrievalVerifier._run_approach(
+        _FakeClient(), APPROACH, "Foo", tmp_path / "input", output_dir, tmp_path / "index"
+    )
+
+    assert run_path == output_dir / "run.txt"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_run_approach_surfaces_output_when_no_run_file_is_produced(tmp_path, capsys) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        RetrievalVerifier._run_approach(
+            _FakeClient(produce_run_file=False),
+            APPROACH,
+            "Foo",
+            tmp_path / "input",
+            output_dir,
+            tmp_path / "index",
+        )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    message = str(exc_info.value)
+    assert "noisy stdout from the tira client" in message
+    assert "noisy stderr from the tira client" in message
+
+
+def test_run_approach_surfaces_output_when_the_client_raises(tmp_path, capsys) -> None:
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        RetrievalVerifier._run_approach(
+            _FakeClient(side_effect=RuntimeError("boom")),
+            APPROACH,
+            "Foo",
+            tmp_path / "input",
+            output_dir,
+            tmp_path / "index",
+        )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    message = str(exc_info.value)
+    assert "noisy stdout from the tira client" in message
+    assert isinstance(exc_info.value.__cause__, RuntimeError)

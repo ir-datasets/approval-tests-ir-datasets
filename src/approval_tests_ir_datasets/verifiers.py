@@ -284,6 +284,12 @@ class RetrievalVerifier:
     around after a successful run -- cleared before each rebuild. Use
     :meth:`cached_run_path` to look up a previously produced run file
     without rebuilding it.
+
+    Each approach's TIRA execution (image pulling, container logs,
+    PyTerrier's own startup output, ...) prints a lot of diagnostic noise
+    directly to stdout/stderr; this is captured and suppressed on success,
+    and only surfaced (as part of the raised error) if that approach fails
+    to produce a run file.
     """
 
     #: The 5 retrieval approaches run by :meth:`verify`. The first entry is
@@ -365,27 +371,7 @@ class RetrievalVerifier:
             output_dir = scratch_root / sanitize_path_component(name) / "output"
             output_dir.mkdir(parents=True)
 
-            team, software = approach.split("/")[1:]
-            system_details = client.public_system_details(team, software)
-            image = system_details.get("public_image_name") or system_details["tira_image_name"]
-
-            client.local_execution.run(
-                image=image,
-                command=system_details["command"],
-                input_dir=input_dir,
-                output_dir=output_dir,
-                input_run=input_run_dir,
-                allow_network=False,
-                forward_environment_variables=system_details.get(
-                    "forward_environment_variable"
-                ),
-            )
-
-            run_path = output_dir / "run.txt"
-            if not run_path.is_file():
-                raise RuntimeError(
-                    f"The '{name}' retrieval software did not produce a run file at {run_path}."
-                )
+            run_path = self._run_approach(client, approach, name, input_dir, output_dir, input_run_dir)
             run_paths[name] = run_path
 
         reference_name = self._approach_name(self.APPROACHES[0])
@@ -410,6 +396,64 @@ class RetrievalVerifier:
             "num_queries": num_queries,
             "runs": runs,
         }
+
+    @staticmethod
+    def _run_approach(
+        client: Any,
+        approach: str,
+        name: str,
+        input_dir: Path,
+        output_dir: Path,
+        input_run_dir: Path,
+    ) -> Path:
+        """Run a single retrieval approach via TIRA, returning its run file.
+
+        The TIRA client (and the container it runs) prints a lot of
+        diagnostic noise directly to stdout/stderr (docker image pulling,
+        PyTerrier's own startup banter, streamed container logs, ...). This
+        is captured rather than left to print, and only surfaced (appended
+        to the raised error) if the approach actually fails to produce a
+        run file -- a successful run stays silent.
+        """
+        import contextlib
+        import io
+
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+        run_path = output_dir / "run.txt"
+        try:
+            with contextlib.redirect_stdout(captured_stdout), contextlib.redirect_stderr(
+                captured_stderr
+            ):
+                team, software = approach.split("/")[1:]
+                system_details = client.public_system_details(team, software)
+                image = system_details.get("public_image_name") or system_details["tira_image_name"]
+
+                client.local_execution.run(
+                    image=image,
+                    command=system_details["command"],
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    input_run=input_run_dir,
+                    allow_network=False,
+                    forward_environment_variables=system_details.get(
+                        "forward_environment_variable"
+                    ),
+                )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Running the '{name}' retrieval software failed.\n"
+                f"--- stdout ---\n{captured_stdout.getvalue()}\n"
+                f"--- stderr ---\n{captured_stderr.getvalue()}"
+            ) from exc
+
+        if not run_path.is_file():
+            raise RuntimeError(
+                f"The '{name}' retrieval software did not produce a run file at {run_path}.\n"
+                f"--- stdout ---\n{captured_stdout.getvalue()}\n"
+                f"--- stderr ---\n{captured_stderr.getvalue()}"
+            )
+        return run_path
 
     @staticmethod
     def _read_run(path: Path) -> Dict[str, List[str]]:
