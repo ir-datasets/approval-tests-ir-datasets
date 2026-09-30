@@ -2,7 +2,7 @@ import unittest
 
 import pytest
 
-from approval_tests_ir_datasets import DatasetNotFoundError, verify
+from approval_tests_ir_datasets import DatasetNotFoundError, cached_result, verify
 
 try:
     import ir_datasets.v2  # noqa: F401
@@ -30,4 +30,16 @@ class VerifyKnownDatasetTest(unittest.TestCase):
         # additionally requires "tira", "tira-cli" and Docker) may or may not
         # contribute to the aggregated result.
         self.assertEqual(result.get("table_line_count"), {"length": 1400})
+
+    def test_cached_result_returns_the_previously_verified_result(self) -> None:
+        result = verify("irds:cranfield-docs")
+
+        cached = cached_result("irds:cranfield-docs")
+
+        self.assertEqual(cached, result)
+
+    def test_cached_result_returns_none_without_a_prior_verify_call(self) -> None:
+        cached = cached_result("irds:a-dataset-that-was-never-verified")
+
+        self.assertIsNone(cached)
 

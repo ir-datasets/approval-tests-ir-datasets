@@ -1,6 +1,6 @@
 import importlib.metadata
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 #: Entry point group under which verifier classes register themselves.
 #: Each entry point is expected to resolve to a class that can be
@@ -39,7 +39,10 @@ class IrDatasetsApprovalTest:
     The aggregated result is also persisted as ``result.json`` under a
     deterministic directory rooted at ir_datasets' home directory (see
     :mod:`approval_tests_ir_datasets.paths`), on a best-effort basis: this is
-    silently skipped if ``ir_datasets`` isn't installed.
+    silently skipped if ``ir_datasets`` isn't installed. Every call to
+    :meth:`verify` re-runs all verifiers from scratch and overwrites this
+    persisted result; use :meth:`cached_result` to read it back without
+    triggering a re-run.
     """
 
     def verify(self, dataset_id: str) -> Dict[str, Any]:
@@ -49,6 +52,10 @@ class IrDatasetsApprovalTest:
         result of its ``verify(dataset_id)`` call. Verifiers that return
         ``None`` (e.g. because the dataset isn't the kind of resource they
         apply to) are omitted from the result.
+
+        This always recomputes every verifier's result from scratch (e.g.
+        rebuilding ``PyTerrierIndexVerifier``'s index) and overwrites any
+        previously persisted result for ``dataset_id``.
         """
         results: Dict[str, Any] = {}
         for entry_point in _discover_verifiers():
@@ -59,6 +66,27 @@ class IrDatasetsApprovalTest:
                 results[entry_point.name] = result
         self._persist_results(dataset_id, results)
         return results
+
+    @staticmethod
+    def cached_result(dataset_id: str) -> Optional[Dict[str, Any]]:
+        """Return the result persisted by a previous :meth:`verify` call.
+
+        Reads ``result.json`` from the deterministic approvals directory
+        for ``dataset_id`` (see :mod:`approval_tests_ir_datasets.paths`)
+        *without* invoking any verifier. Returns ``None`` if ``verify`` has
+        never been run for ``dataset_id`` yet, or if ``ir_datasets`` isn't
+        installed.
+        """
+        try:
+            from .paths import approvals_dir
+
+            directory = approvals_dir(dataset_id)
+        except ImportError:
+            return None
+        result_path = directory / "result.json"
+        if not result_path.is_file():
+            return None
+        return json.loads(result_path.read_text())
 
     @staticmethod
     def _persist_results(dataset_id: str, results: Dict[str, Any]) -> None:
@@ -81,7 +109,9 @@ def verify(dataset_id: str) -> Dict[str, Any]:
 
     Delegates to :class:`IrDatasetsApprovalTest`, running every registered
     verifier plugin against ``dataset_id`` and returning their aggregated
-    results (see :meth:`IrDatasetsApprovalTest.verify`).
+    results (see :meth:`IrDatasetsApprovalTest.verify`). This always
+    recomputes the result from scratch; use :func:`cached_result` to read
+    back a previously persisted result without re-running the verifiers.
 
     Raises ``DatasetNotFoundError`` if ``dataset_id`` cannot be resolved --
     either because no such dataset exists, or because a verifier plugin's
@@ -93,4 +123,19 @@ def verify(dataset_id: str) -> Dict[str, Any]:
         raise DatasetNotFoundError(f"Dataset '{dataset_id}' does not exist.") from exc
 
 
-__all__ = ["DatasetNotFoundError", "IrDatasetsApprovalTest", "verify"]
+def cached_result(dataset_id: str) -> Optional[Dict[str, Any]]:
+    """Return the result persisted by a previous :func:`verify` call.
+
+    See :meth:`IrDatasetsApprovalTest.cached_result`. Returns ``None`` if
+    ``verify`` has never been run for ``dataset_id`` yet, or if
+    ``ir_datasets`` isn't installed.
+    """
+    return IrDatasetsApprovalTest.cached_result(dataset_id)
+
+
+__all__ = [
+    "DatasetNotFoundError",
+    "IrDatasetsApprovalTest",
+    "cached_result",
+    "verify",
+]

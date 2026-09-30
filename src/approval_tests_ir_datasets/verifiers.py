@@ -100,6 +100,9 @@ class PyTerrierIndexVerifier:
     known to be host-visible (e.g. this repository's dev container
     bind-mounts ``/tmp`` 1:1 from the host and sets
     ``IR_DATASETS_HOME=/tmp/.ir_datasets``) if this doesn't hold by default.
+
+    Use :meth:`cached_index_path` to look up a previously built index's
+    directory without rebuilding it.
     """
 
     APPROACH = "ir-benchmarks/tira-ir-starter/Index (tira-ir-starter-pyterrier)"
@@ -115,6 +118,26 @@ class PyTerrierIndexVerifier:
             return None
 
         return self._build_index(node, dataset_id)
+
+    @classmethod
+    def cached_index_path(cls, dataset_id: str) -> Optional[Path]:
+        """Return the directory of a previously built PyTerrier index.
+
+        Looks up the deterministic ``approvals_dir(dataset_id,
+        "pyterrier_index")`` directory (see
+        :mod:`approval_tests_ir_datasets.paths`) for a ``data.properties``
+        file, *without* invoking ``tira-cli``. Returns the directory
+        containing it (the actual index), or ``None`` if no index has been
+        built for ``dataset_id`` yet, or if ``ir_datasets`` isn't installed.
+        """
+        try:
+            from .paths import approvals_dir
+
+            scratch_root = approvals_dir(dataset_id, "pyterrier_index")
+        except ImportError:
+            return None
+        properties_path = cls._find_data_properties(scratch_root)
+        return properties_path.parent if properties_path is not None else None
 
     def _build_index(self, node: Any, dataset_id: str) -> Dict[str, Any]:
         import shutil

@@ -51,3 +51,20 @@ class PyTerrierIndexVerifierTest(unittest.TestCase):
         result = PyTerrierIndexVerifier().verify("irds:cranfield")
 
         self.assertIsNone(result)
+
+    def test_cached_index_path_finds_the_index_built_by_verify(self) -> None:
+        import approval_tests_ir_datasets as atid
+
+        atid.verify("irds:cranfield-docs")
+
+        index_path = PyTerrierIndexVerifier().cached_index_path("irds:cranfield-docs")
+
+        self.assertIsNotNone(index_path)
+        self.assertTrue((index_path / "data.properties").is_file())
+
+    def test_cached_index_path_returns_none_without_a_prior_verify_call(self) -> None:
+        index_path = PyTerrierIndexVerifier().cached_index_path(
+            "irds:a-dataset-that-was-never-verified"
+        )
+
+        self.assertIsNone(index_path)
