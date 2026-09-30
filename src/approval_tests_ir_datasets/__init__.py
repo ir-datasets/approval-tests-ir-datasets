@@ -565,7 +565,8 @@ def verify(
     render_as_html: bool = False,
     hf_local_dir: Optional[Union[str, Path]] = None,
     wait_for_approval: bool = False,
-) -> Dict[str, Any]:
+    return_result: bool = False,
+) -> Optional[Dict[str, Any]]:
     """Verify a dataset identifier.
 
     Delegates to :class:`IrDatasetsApprovalTest`, running every registered
@@ -582,8 +583,8 @@ def verify(
     If ``render_as_html`` is ``True``, the result is additionally rendered
     as a self-contained HTML report and written to a temporary directory
     (see :meth:`IrDatasetsApprovalTest.verify`'s docstring); the written
-    file's path is both printed and available as the result dict's
-    ``"__html_report__"`` key.
+    file's path is available as the result dict's ``"__html_report__"``
+    key.
 
     If ``hf_local_dir`` is given, ``dataset_id`` must be an ``hf:`` id, and
     it is resolved against this local directory instead of the real
@@ -595,12 +596,21 @@ def verify(
     :meth:`IrDatasetsApprovalTest.verify`'s docstring for the full
     behavior (including where an approved result is stored).
 
+    A short, human-friendly summary is always printed to stdout (see
+    :meth:`IrDatasetsApprovalTest.verify`'s docstring). By default
+    (``return_result=False``), this function itself returns ``None``
+    rather than the results dict, so a bare ``verify(...)`` call left as
+    the last expression in a Jupyter notebook cell doesn't also have its
+    (much noisier) raw result dict auto-displayed right below that
+    summary. Pass ``return_result=True`` to get the results dict back, for
+    programmatic use.
+
     Raises ``DatasetNotFoundError`` if ``dataset_id`` cannot be resolved --
     either because no such dataset exists, or because a verifier plugin's
     optional dependency (e.g. ``ir_datasets``) is not installed.
     """
     try:
-        return IrDatasetsApprovalTest().verify(
+        results = IrDatasetsApprovalTest().verify(
             dataset_id,
             recompute=recompute,
             render_as_html=render_as_html,
@@ -609,6 +619,7 @@ def verify(
         )
     except (KeyError, ImportError) as exc:
         raise DatasetNotFoundError(f"Dataset '{dataset_id}' does not exist.") from exc
+    return results if return_result else None
 
 
 def cached_result(dataset_id: str) -> Optional[Dict[str, Any]]:

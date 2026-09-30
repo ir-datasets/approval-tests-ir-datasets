@@ -23,7 +23,7 @@ def test_verify_raises_for_unknown_dataset() -> None:
 @unittest.skipUnless(IR_DATASETS_V2_AVAILABLE, "ir_datasets.v2 is not installed")
 class VerifyKnownDatasetTest(unittest.TestCase):
     def test_verify_succeeds_for_known_table_dataset(self) -> None:
-        result = verify("irds:cranfield-docs")
+        result = verify("irds:cranfield-docs", return_result=True)
 
         # Only assert on the always-available verifier's result: depending on
         # the environment, other verifiers (e.g. PyTerrierIndexVerifier, which
@@ -32,7 +32,7 @@ class VerifyKnownDatasetTest(unittest.TestCase):
         self.assertEqual(result.get("table_line_count"), {"length": 1400})
 
     def test_cached_result_returns_the_previously_verified_result(self) -> None:
-        result = verify("irds:cranfield-docs")
+        result = verify("irds:cranfield-docs", return_result=True)
 
         cached = cached_result("irds:cranfield-docs")
 
@@ -42,4 +42,13 @@ class VerifyKnownDatasetTest(unittest.TestCase):
         cached = cached_result("irds:a-dataset-that-was-never-verified")
 
         self.assertIsNone(cached)
+
+    def test_verify_returns_none_by_default(self) -> None:
+        # return_result defaults to False so that a bare verify(...) call
+        # left as a notebook cell's last expression doesn't also
+        # auto-display its (much noisier) raw result dict right below the
+        # printed summary.
+        result = verify("irds:cranfield-docs")
+
+        self.assertIsNone(result)
 

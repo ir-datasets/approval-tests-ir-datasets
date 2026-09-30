@@ -57,5 +57,5 @@ class HfLocalProviderTest(unittest.TestCase):
         self.assertIs(first, second)
 
     def test_verify_works_directly_on_a_path_based_id(self) -> None:
-        docs_result = verify(f"hf-local:{DATASET_DIR}/docs")
+        docs_result = verify(f"hf-local:{DATASET_DIR}/docs", return_result=True)
         self.assertEqual(docs_result.get("table_line_count"), {"length": 10})

@@ -50,13 +50,13 @@ class HfProviderPangramIntegrationTest(unittest.TestCase):
         # PyTerrierIndexVerifier, which additionally requires "tira",
         # "tira-cli" and Docker) may or may not contribute to the
         # aggregated result (see test_verify.py).
-        docs_result = verify(f"hf-local:{DATASET_DIR}/docs")
+        docs_result = verify(f"hf-local:{DATASET_DIR}/docs", return_result=True)
         self.assertEqual(docs_result.get("table_line_count"), {"length": 10})
 
-        queries_result = verify(f"hf-local:{DATASET_DIR}/queries")
+        queries_result = verify(f"hf-local:{DATASET_DIR}/queries", return_result=True)
         self.assertEqual(queries_result.get("table_line_count"), {"length": 3})
 
-        qrels_result = verify(f"hf-local:{DATASET_DIR}/qrels")
+        qrels_result = verify(f"hf-local:{DATASET_DIR}/qrels", return_result=True)
         self.assertEqual(qrels_result.get("table_line_count"), {"length": 3})
         self.assertEqual(
             qrels_result.get("qrel_stats"),
