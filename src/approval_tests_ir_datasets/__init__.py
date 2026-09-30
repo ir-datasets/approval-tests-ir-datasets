@@ -1,4 +1,5 @@
 import importlib.metadata
+import json
 from typing import Any, Dict, List
 
 #: Entry point group under which verifier classes register themselves.
@@ -34,6 +35,11 @@ class IrDatasetsApprovalTest:
     ``verify(dataset_id)`` method is called with the dataset id passed to
     :meth:`verify`. If no verifiers are registered, an empty dict is
     returned.
+
+    The aggregated result is also persisted as ``result.json`` under a
+    deterministic directory rooted at ir_datasets' home directory (see
+    :mod:`approval_tests_ir_datasets.paths`), on a best-effort basis: this is
+    silently skipped if ``ir_datasets`` isn't installed.
     """
 
     def verify(self, dataset_id: str) -> Dict[str, Any]:
@@ -51,7 +57,23 @@ class IrDatasetsApprovalTest:
             result = verifier.verify(dataset_id)
             if result is not None:
                 results[entry_point.name] = result
+        self._persist_results(dataset_id, results)
         return results
+
+    @staticmethod
+    def _persist_results(dataset_id: str, results: Dict[str, Any]) -> None:
+        """Best-effort write of ``results`` as JSON to the deterministic
+        approvals directory for ``dataset_id``. Does nothing if
+        ``ir_datasets`` isn't installed.
+        """
+        try:
+            from .paths import approvals_dir
+
+            directory = approvals_dir(dataset_id)
+        except ImportError:
+            return
+        result_path = directory / "result.json"
+        result_path.write_text(json.dumps(results, indent=2, sort_keys=True))
 
 
 def verify(dataset_id: str) -> Dict[str, Any]:

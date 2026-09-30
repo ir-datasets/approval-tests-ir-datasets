@@ -13,6 +13,10 @@ jobs:
       # PyTerrierIndexVerifier's "tira-cli run local" can start sibling
       # containers on the host with bind mounts that resolve correctly.
       options: -v /var/run/docker.sock:/var/run/docker.sock -v /tmp:/tmp
+    env:
+      # Approval test results/artifacts are stored under
+      # "<IR_DATASETS_HOME>/approvals"; keep that host-visible (see mounts above).
+      IR_DATASETS_HOME: /tmp/.ir_datasets
     permissions:
       contents: read
 
