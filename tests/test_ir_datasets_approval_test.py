@@ -147,3 +147,57 @@ if IR_DATASETS_AVAILABLE:
         assert result_path.is_file()
         assert json.loads(result_path.read_text()) == result
         assert result == {"uppercase": "IRDS:CRANFIELD-DOCS"}
+
+    def test_verify_traverses_sub_resources_of_a_benchmark(
+        tmp_path, monkeypatch
+    ) -> None:
+        # "irds:cranfield" is a benchmark with docs, queries and qrels
+        # sub-tables (each a distinct qualified name) -- verify() should run
+        # every verifier against each of them, not just the benchmark itself.
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+
+        result = IrDatasetsApprovalTest().verify("irds:cranfield")
+
+        assert set(result.keys()) == {
+            "irds:cranfield",
+            "irds:cranfield-docs",
+            "irds:cranfield-queries",
+            "irds:cranfield-qrels",
+        }
+        for dataset_id, sub_result in result.items():
+            assert sub_result == {"uppercase": dataset_id.upper()}
+
+        # The aggregated result is persisted for the root id, and each sub
+        # resource's own flat result is persisted independently too.
+        root_result_path = tmp_path / "approvals" / "irds_cranfield" / "result.json"
+        assert json.loads(root_result_path.read_text()) == result
+
+        docs_result_path = (
+            tmp_path / "approvals" / "irds_cranfield-docs" / "result.json"
+        )
+        assert json.loads(docs_result_path.read_text()) == {
+            "uppercase": "IRDS:CRANFIELD-DOCS"
+        }
+
+    def test_verify_keeps_flat_shape_for_a_leaf_table(tmp_path, monkeypatch) -> None:
+        # A leaf table (no docs/queries/qrels/... sub resources) keeps the
+        # original flat result shape, unaffected by traversal.
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+
+        result = IrDatasetsApprovalTest().verify("irds:cranfield-docs")
+
+        assert result == {"uppercase": "IRDS:CRANFIELD-DOCS"}
