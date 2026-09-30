@@ -42,10 +42,16 @@ class PyTerrierIndexVerifierTest(unittest.TestCase):
 
         self.assertIsNone(result)
 
-    def test_verify_returns_none_for_queries_table(self) -> None:
+    def test_verify_builds_index_for_cranfield_queries(self) -> None:
+        # PyTerrierIndexVerifier applies to any table whose records expose
+        # default_text() -- not just document tables -- so query tables are
+        # indexed too.
         result = PyTerrierIndexVerifier().verify("irds:cranfield-queries")
 
-        self.assertIsNone(result)
+        self.assertEqual(
+            result,
+            {"num_documents": 225, "num_terms": 659, "num_tokens": 2239},
+        )
 
     def test_verify_returns_none_for_non_table_resources(self) -> None:
         result = PyTerrierIndexVerifier().verify("irds:cranfield")

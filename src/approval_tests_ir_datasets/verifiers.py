@@ -68,19 +68,26 @@ class QrelTableStatsVerifier:
 
 
 class PyTerrierIndexVerifier:
-    """Builds a PyTerrier index for an ir_datasets v2 document table via TIRA.
+    """Builds a PyTerrier index for any ir_datasets v2 table whose records
+    have text via TIRA.
 
-    Loads ``dataset_id`` with ``ir_datasets.v2.load``. If the resolved node
-    is not a document table (``irds:DocTable``), ``None`` is returned.
+    Loads ``dataset_id`` with ``ir_datasets.v2.load``. If the resolved
+    node's record type doesn't expose a ``default_text()`` method -- i.e.
+    it's not a table of texts (e.g. a document table, a query table, or any
+    other table whose records have text), such as a qrels table or a
+    non-table resource -- ``None`` is returned.
 
-    Otherwise, the documents are persisted to a ``documents.jsonl`` file in
+    Otherwise, the records are persisted to a ``documents.jsonl`` file in
     TIRA's "tirex" format (one JSON object per line with ``docno`` and
-    ``text`` fields), and
+    ``text`` fields -- ``docno`` being each record's id, e.g. ``doc_id`` for
+    a document table or ``query_id`` for a query table), and
     ``tira-cli run local --approach "ir-benchmarks/tira-ir-starter/Index
     (tira-ir-starter-pyterrier)"`` is invoked against them to build a
     PyTerrier index. Statistics parsed from the resulting index's
     ``data.properties`` file are returned as
-    ``{"num_documents": ..., "num_terms": ..., "num_tokens": ...}``.
+    ``{"num_documents": ..., "num_terms": ..., "num_tokens": ...}``
+    (``"num_documents"`` counting whatever kind of record was indexed, e.g.
+    documents or queries).
 
     This requires the optional ``tira`` package, the ``tira-cli`` and
     ``docker`` commands, and access to a Docker daemon (as configured in
@@ -110,11 +117,10 @@ class PyTerrierIndexVerifier:
     def verify(self, dataset_id: str) -> Optional[Dict[str, Any]]:
         import ir_datasets.v2 as ir_datasets_v2
         import tira  # noqa: F401 -- lazily required; propagates ImportError if missing.
-        from ir_datasets.v2.nodes import TABLE_TYPES
-        from ir_datasets.v2.vocabulary import is_subtype
 
         node = ir_datasets_v2.load(dataset_id)
-        if not is_subtype(getattr(node, "type", None), TABLE_TYPES["docs"]):
+        record_type = getattr(node, "record_type", None)
+        if record_type is None or not hasattr(record_type, "default_text"):
             return None
 
         return self._build_index(node, dataset_id)
@@ -157,10 +163,14 @@ class PyTerrierIndexVerifier:
         tmp_dir.mkdir()
 
         documents_path = input_dir / "documents.jsonl"
+        id_field = node.record_type._fields[0]
         with documents_path.open("w") as documents_file:
-            for doc in node:
+            for record in node:
                 documents_file.write(
-                    json.dumps({"docno": doc.doc_id, "text": doc.default_text()}) + "\n"
+                    json.dumps(
+                        {"docno": getattr(record, id_field), "text": record.default_text()}
+                    )
+                    + "\n"
                 )
 
         env = dict(os.environ)
