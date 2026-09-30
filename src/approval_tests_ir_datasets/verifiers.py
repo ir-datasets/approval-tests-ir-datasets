@@ -9,7 +9,7 @@ import os
 import subprocess
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class TableLineCountVerifier:
@@ -233,7 +233,7 @@ class PyTerrierIndexVerifier:
 
 
 class RetrievalVerifier:
-    """Runs a full BM25 retrieval pipeline for an ir_datasets v2 benchmark via TIRA.
+    """Runs several retrieval pipelines for an ir_datasets v2 benchmark via TIRA.
 
     Loads ``dataset_id`` with ``ir_datasets.v2.load``. If the resolved node
     doesn't have both a document table and a query table (e.g. it's just a
@@ -247,14 +247,34 @@ class RetrievalVerifier:
     2. The queries are persisted as ``queries.xml`` (TREC topics format, as
        expected by the retrieval software) under the deterministic
        ``approvals_dir(dataset_id, "retrieval")`` directory.
-    3. ``tira-ir-starter-pyterrier``'s BM25 retrieval software is run
+    3. Each of :attr:`APPROACHES` (5 ``tira-ir-starter-pyterrier`` retrieval
+       approaches: BM25, DirichletLM, DPH, Hiemstra_LM and PL2) is run
        directly against the persisted queries, with the PyTerrier index
-       from step 1 passed in as its input run (``$inputRun``), producing a
-       TREC run file (``run.txt``).
+       from step 1 passed in as its input run (``$inputRun``), each
+       producing its own TREC run file (``run.txt``).
 
-    Returns ``{"num_queries": ..., "num_results": ...}``, counting the
-    queries retrieved for and the total number of result lines across all
-    of them.
+    Returns::
+
+        {
+            "num_queries": ...,
+            "runs": {
+                "BM25": {"num_results": ...},
+                "DirichletLM": {
+                    "num_results": ...,
+                    "jaccard_similarity_to_bm25": {"top_10": ..., "top_100": ...},
+                },
+                "DPH": {...},
+                "Hiemstra_LM": {...},
+                "PL2": {...},
+            },
+        }
+
+    ``"num_results"`` is the total number of result lines in that
+    approach's run file. ``"jaccard_similarity_to_bm25"`` (omitted for BM25
+    itself, which is the reference) is the Jaccard similarity between that
+    approach's and BM25's retrieved documents, per query, averaged over all
+    queries -- computed separately over each query's top 10 and top 100
+    results (see :meth:`_jaccard_similarity`).
 
     This requires the optional ``tira`` package, the ``docker`` command,
     and access to a Docker daemon (as configured in this repository's dev
@@ -266,7 +286,33 @@ class RetrievalVerifier:
     without rebuilding it.
     """
 
-    APPROACH = "ir-benchmarks/tira-ir-starter/BM25 (tira-ir-starter-pyterrier)"
+    #: The 5 retrieval approaches run by :meth:`verify`. The first entry is
+    #: the reference approach that every other approach's results are
+    #: compared against via Jaccard similarity.
+    APPROACHES = (
+        "ir-benchmarks/tira-ir-starter/BM25 (tira-ir-starter-pyterrier)",
+        "ir-benchmarks/tira-ir-starter/DirichletLM (tira-ir-starter-pyterrier)",
+        "ir-benchmarks/tira-ir-starter/DPH (tira-ir-starter-pyterrier)",
+        "ir-benchmarks/tira-ir-starter/Hiemstra_LM (tira-ir-starter-pyterrier)",
+        "ir-benchmarks/tira-ir-starter/PL2 (tira-ir-starter-pyterrier)",
+    )
+    #: Rank cutoffs the Jaccard similarity to the reference approach is
+    #: computed at.
+    SIMILARITY_CUTOFFS = (10, 100)
+
+    #: Backwards-compatible alias for the reference approach (previously
+    #: the only approach this verifier ran).
+    APPROACH = APPROACHES[0]
+
+    @classmethod
+    def _approach_name(cls, approach: str) -> str:
+        """The short, human-readable name of an approach (e.g. ``"BM25"``
+        for ``"ir-benchmarks/tira-ir-starter/BM25
+        (tira-ir-starter-pyterrier)"``), used as a dict key and as a path
+        segment.
+        """
+        software = approach.split("/")[-1]
+        return software.split(" (")[0]
 
     def verify(self, dataset_id: str) -> Optional[Dict[str, Any]]:
         import ir_datasets.v2 as ir_datasets_v2
@@ -284,7 +330,7 @@ class RetrievalVerifier:
 
         from tira.rest_api_client import Client
 
-        from .paths import approvals_dir
+        from .paths import approvals_dir, sanitize_path_component
 
         docs_dataset_id = node.docs.qualified_name
 
@@ -307,50 +353,122 @@ class RetrievalVerifier:
         scratch_root.mkdir(parents=True, exist_ok=True)
 
         input_dir = scratch_root / "input"
-        output_dir = scratch_root / "output"
         input_dir.mkdir()
-        output_dir.mkdir()
 
         num_queries = self._write_queries(node.queries, dataset_id, input_dir / "queries.xml")
 
         client = Client()
-        team, software = self.APPROACH.split("/")[1:]
-        system_details = client.public_system_details(team, software)
-        image = system_details.get("public_image_name") or system_details["tira_image_name"]
 
-        client.local_execution.run(
-            image=image,
-            command=system_details["command"],
-            input_dir=input_dir,
-            output_dir=output_dir,
-            input_run=input_run_dir,
-            allow_network=False,
-            forward_environment_variables=system_details.get("forward_environment_variable"),
-        )
+        run_paths: Dict[str, Path] = {}
+        for approach in self.APPROACHES:
+            name = self._approach_name(approach)
+            output_dir = scratch_root / sanitize_path_component(name) / "output"
+            output_dir.mkdir(parents=True)
 
-        run_path = output_dir / "run.txt"
-        if not run_path.is_file():
-            raise RuntimeError(f"The retrieval software did not produce a run file at {run_path}.")
+            team, software = approach.split("/")[1:]
+            system_details = client.public_system_details(team, software)
+            image = system_details.get("public_image_name") or system_details["tira_image_name"]
+
+            client.local_execution.run(
+                image=image,
+                command=system_details["command"],
+                input_dir=input_dir,
+                output_dir=output_dir,
+                input_run=input_run_dir,
+                allow_network=False,
+                forward_environment_variables=system_details.get(
+                    "forward_environment_variable"
+                ),
+            )
+
+            run_path = output_dir / "run.txt"
+            if not run_path.is_file():
+                raise RuntimeError(
+                    f"The '{name}' retrieval software did not produce a run file at {run_path}."
+                )
+            run_paths[name] = run_path
+
+        reference_name = self._approach_name(self.APPROACHES[0])
+        reference_run = self._read_run(run_paths[reference_name])
+
+        runs: Dict[str, Any] = {}
+        for approach in self.APPROACHES:
+            name = self._approach_name(approach)
+            run_path = run_paths[name]
+            result: Dict[str, Any] = {
+                "num_results": sum(1 for _ in run_path.open()),
+            }
+            if name != reference_name:
+                run = self._read_run(run_path)
+                result["jaccard_similarity_to_bm25"] = {
+                    f"top_{k}": self._jaccard_similarity(reference_run, run, k)
+                    for k in self.SIMILARITY_CUTOFFS
+                }
+            runs[name] = result
 
         return {
             "num_queries": num_queries,
-            "num_results": sum(1 for _ in run_path.open()),
+            "runs": runs,
         }
 
+    @staticmethod
+    def _read_run(path: Path) -> Dict[str, List[str]]:
+        """Parse a TREC run file into ``{query_id: [doc_id, ...]}``, each
+        query's doc ids ordered by increasing rank (i.e. best-first).
+        """
+        ranked: Dict[str, List[tuple]] = {}
+        for line in path.open():
+            fields = line.split()
+            if len(fields) < 4:
+                continue
+            query_id, _, doc_id, rank = fields[:4]
+            ranked.setdefault(query_id, []).append((int(rank), doc_id))
+        return {
+            query_id: [doc_id for _, doc_id in sorted(docs)]
+            for query_id, docs in ranked.items()
+        }
+
+    @staticmethod
+    def _jaccard_similarity(run_a: Dict[str, List[str]], run_b: Dict[str, List[str]], k: int) -> float:
+        """The Jaccard similarity of ``run_a`` and ``run_b``'s top ``k``
+        results, per query, averaged over every query present in either run.
+
+        A query missing from one of the runs is treated as having no
+        results for it. Queries with no results in *either* run (e.g. both
+        top-k sets are empty) contribute a similarity of ``1.0`` (both
+        agree on nothing).
+        """
+        query_ids = set(run_a) | set(run_b)
+        if not query_ids:
+            return 0.0
+
+        similarities = []
+        for query_id in query_ids:
+            top_a = set(run_a.get(query_id, [])[:k])
+            top_b = set(run_b.get(query_id, [])[:k])
+            union = top_a | top_b
+            similarities.append(1.0 if not union else len(top_a & top_b) / len(union))
+        return sum(similarities) / len(similarities)
+
     @classmethod
-    def cached_run_path(cls, dataset_id: str) -> Optional[Path]:
+    def cached_run_path(cls, dataset_id: str, approach: Optional[str] = None) -> Optional[Path]:
         """Return the run file of a previously executed retrieval.
 
-        Looks up the deterministic ``approvals_dir(dataset_id, "retrieval")``
-        directory (see :mod:`approval_tests_ir_datasets.paths`) for a
+        Looks up the deterministic ``approvals_dir(dataset_id, "retrieval",
+        ...)`` directory (see :mod:`approval_tests_ir_datasets.paths`) for
+        the given ``approach``'s (default: the reference approach, BM25)
         ``run.txt`` file, *without* invoking the retrieval software again.
-        Returns ``None`` if no retrieval has been run for ``dataset_id`` yet,
-        or if ``ir_datasets`` isn't installed.
+        Returns ``None`` if no retrieval has been run for ``dataset_id`` (or
+        for that specific ``approach``) yet, or if ``ir_datasets`` isn't
+        installed.
         """
+        if approach is None:
+            approach = cls.APPROACHES[0]
         try:
-            from .paths import approvals_dir
+            from .paths import approvals_dir, sanitize_path_component
 
-            scratch_root = approvals_dir(dataset_id, "retrieval")
+            name = cls._approach_name(approach)
+            scratch_root = approvals_dir(dataset_id, "retrieval", sanitize_path_component(name))
         except ImportError:
             return None
         run_path = scratch_root / "output" / "run.txt"

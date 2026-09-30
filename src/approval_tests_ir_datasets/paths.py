@@ -15,9 +15,17 @@ APPROVALS_DIR_NAME = "approvals"
 _UNSAFE_PATH_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
 
 
+def sanitize_path_component(value: str) -> str:
+    """Turn an arbitrary string (e.g. a dataset id or approach name) into a
+    safe path segment, replacing any character that isn't alphanumeric,
+    ``_``, ``.`` or ``-`` with ``_``.
+    """
+    return _UNSAFE_PATH_CHARS.sub("_", value)
+
+
 def sanitize_dataset_id(dataset_id: str) -> str:
     """Turn a dataset id (e.g. ``"irds:cranfield-docs"``) into a safe path segment."""
-    return _UNSAFE_PATH_CHARS.sub("_", dataset_id)
+    return sanitize_path_component(dataset_id)
 
 
 def approvals_home() -> Path:
@@ -48,4 +56,9 @@ def approvals_dir(dataset_id: str, *parts: str) -> Path:
     return directory
 
 
-__all__ = ["approvals_dir", "approvals_home", "sanitize_dataset_id"]
+__all__ = [
+    "approvals_dir",
+    "approvals_home",
+    "sanitize_dataset_id",
+    "sanitize_path_component",
+]
