@@ -19,7 +19,7 @@ class QrelTableStatsVerifierTest(unittest.TestCase):
             result,
             {
                 "number_of_queries": 225,
-                "relevance_counts": {-1: 225, 1: 128, 2: 387, 3: 734, 4: 363},
+                "relevance_counts": {"-1": 225, "1": 128, "2": 387, "3": 734, "4": 363},
             },
         )
 

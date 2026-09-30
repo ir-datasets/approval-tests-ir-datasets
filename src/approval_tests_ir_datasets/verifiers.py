@@ -59,7 +59,13 @@ class QrelTableStatsVerifier:
         relevance_counts: Counter = Counter()
         for qrel in node:
             query_ids.add(qrel.query_id)
-            relevance_counts[qrel.relevance] += 1
+            # Stringified up front: an approved snapshot is round-tripped
+            # through JSON, which only supports string object keys (an int
+            # key like 1 comes back as "1") -- keeping relevance labels as
+            # ints here would make every re-run spuriously "differ" from a
+            # previously approved snapshot (a missing int key plus an
+            # unexpected string key for the very same count).
+            relevance_counts[str(qrel.relevance)] += 1
 
         return {
             "number_of_queries": len(query_ids),

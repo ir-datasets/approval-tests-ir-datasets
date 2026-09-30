@@ -60,5 +60,5 @@ class HfProviderPangramIntegrationTest(unittest.TestCase):
         self.assertEqual(qrels_result.get("table_line_count"), {"length": 3})
         self.assertEqual(
             qrels_result.get("qrel_stats"),
-            {"number_of_queries": 3, "relevance_counts": {1: 3}},
+            {"number_of_queries": 3, "relevance_counts": {"1": 3}},
         )
