@@ -2,25 +2,24 @@
   "name": "approval-tests-ir-datasets",
   "image": "ghcr.io/ir-datasets/approval-tests-ir-datasets:0.0.1-dev",
   "workspaceFolder": "/workspaces/approval-tests-ir-datasets",
-  // The Docker socket and /tmp are bind-mounted in so PyTerrierIndexVerifier's
-  // "tira-cli run local" can start sibling containers on the host: those
-  // containers need bind-mount sources (the persisted documents, the index
-  // output) that resolve to the same path both here and on the Docker host.
-  // /tmp is a simple, generally host-writable path both engines share (unlike
-  // "/workspaces/...", which has no host equivalent e.g. with Docker Desktop).
+  // The Docker socket and shared temp storage are mounted in so
+  // PyTerrierIndexVerifier's "tira-cli run local" can start sibling
+  // containers. Codespaces backs this workspace's /tmp with /mnt/containerTmp
+  // on the Docker host, so mount that backing path at the same location here.
   "mounts": [
     "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
-    "source=/tmp,target=/tmp,type=bind"
+    "source=/tmp,target=/tmp,type=bind",
+    "source=/mnt/containerTmp,target=/mnt/containerTmp,type=bind"
   ],
   // Host networking: lets e.g. approval_server.py's "localhost:<port>" (see
   // the "Approve"/"Deny" HTML report server) be reached directly from the
   // host's own browser, with no explicit port-forwarding configuration.
   "runArgs": ["--network=host"],
   // Approval test results and artifacts (e.g. the built PyTerrier index) are
-  // stored under "<IR_DATASETS_HOME>/approvals". Pointing it at /tmp keeps
-  // that directory host-visible, which PyTerrierIndexVerifier relies on.
+  // stored under "<IR_DATASETS_HOME>/approvals". Use the Docker-host path so
+  // sibling containers can read and write those artifacts.
   "remoteEnv": {
-    "IR_DATASETS_HOME": "/tmp/.ir_datasets"
+    "IR_DATASETS_HOME": "/mnt/containerTmp/.ir_datasets"
   },
   "postStartCommand": "pip install --no-deps -e .",
   "customizations": {

@@ -204,6 +204,7 @@ class PyTerrierIndexVerifier:
         output_dir = scratch_root / "output"
         tmp_dir = scratch_root / "tmp"
         input_dir.mkdir()
+        output_dir.mkdir()
         tmp_dir.mkdir()
 
         documents_path = input_dir / "documents.jsonl"
@@ -217,39 +218,28 @@ class PyTerrierIndexVerifier:
                     + "\n"
                 )
 
-        env = dict(os.environ)
-        env["TMPDIR"] = str(tmp_dir)
-        # "tira-cli run local" currently raises after the index is built
-        # successfully, because it also tries to evaluate the run against
-        # a *registered* TIRA dataset -- which a local documents
-        # directory is not. The index itself is still produced, so the
-        # non-zero exit code is intentionally ignored here. Its output is
-        # captured (rather than left to print) and only surfaced below if
-        # the index actually failed to materialize.
-        process = subprocess.run(
-            [
-                "tira-cli",
-                "run",
-                "local",
-                "--approach",
-                self.APPROACH,
-                "--input",
-                str(input_dir),
-                "--out",
-                str(output_dir),
-            ],
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+            from tira.local_execution_integration import LocalExecutionIntegration
+            from tira.rest_api_client import Client
+
+            # The CLI evaluates every local input as a registered dataset after
+            # execution. This input is intentionally only a temporary directory,
+            # so use the underlying API with evaluation disabled instead.
+            client = Client()
+            approach_parts = self.APPROACH.split("/")
+            system_details = client.public_system_details(*approach_parts[1:])
+            image = system_details.get("public_image_name") or system_details["tira_image_name"]
+            LocalExecutionIntegration(client).run(
+                image=image,
+                command=system_details["command"],
+                input_dir=input_dir,
+                output_dir=output_dir,
+                evaluate=False,
+            )
 
         properties_path = self._find_data_properties(scratch_root)
         if properties_path is None:
             raise RuntimeError(
-                "tira-cli did not produce a PyTerrier index (no data.properties found).\n"
-                f"--- tira-cli stdout ---\n{process.stdout}\n"
-                f"--- tira-cli stderr ---\n{process.stderr}"
+                    "TIRA did not produce a PyTerrier index (no data.properties found)."
             )
         return self._stats_from_properties(self._parse_properties(properties_path))
 
