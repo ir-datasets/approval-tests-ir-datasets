@@ -8,6 +8,8 @@ than a web framework: this only ever needs to answer two kinds of request
 real HTTP framework would be more machinery than the job needs.
 """
 import http.server
+import threading
+import time
 from typing import Optional
 
 #: Appended to the report's own HTML, just before ``</body>``: two buttons
@@ -85,6 +87,50 @@ def _make_handler_class(html_bytes: bytes, decision: _Decision):
     return _ApprovalHandler
 
 
+def _in_notebook() -> bool:
+    """Whether this is running inside a Jupyter notebook kernel (as opposed
+    to a plain terminal, script, or e.g. a bare IPython shell), so
+    :func:`run_approval_server` can additionally render the report inline
+    as the executing cell's output -- rather than relying solely on the
+    printed URL, which still works everywhere as a fallback.
+    """
+    try:
+        from IPython import get_ipython
+    except ImportError:
+        return False
+    shell = get_ipython()
+    return shell is not None and shell.__class__.__name__ == "ZMQInteractiveShell"
+
+
+def _serve_until_decided(httpd: http.server.HTTPServer, decision: _Decision) -> None:
+    while decision.approved is None:
+        httpd.handle_request()
+
+
+def _run_inline_in_notebook(httpd: http.server.HTTPServer, decision: _Decision, url: str) -> None:
+    """Serve ``httpd`` from a background thread (so the current cell can
+    keep running), display the report inline via an ``<iframe>`` so it
+    shows up directly in the notebook's output -- no separate browser tab
+    needed -- then block (polling, since the serving itself now happens on
+    the other thread) until a decision is made, and finally clear that
+    inline output again (the iframe, plus the "Approve or Deny at ..."
+    line printed just before this was called), so the cell is left showing
+    only whatever's printed after this returns (e.g. :meth:`verify`'s own
+    summary) rather than a now-stale, no-longer-interactive report.
+    """
+    from IPython.display import IFrame, clear_output, display
+
+    server_thread = threading.Thread(target=_serve_until_decided, args=(httpd, decision), daemon=True)
+    server_thread.start()
+    display(IFrame(src=url, width="100%", height=500))
+    try:
+        while decision.approved is None:
+            time.sleep(0.1)
+    finally:
+        server_thread.join(timeout=5)
+        clear_output(wait=True)
+
+
 def run_approval_server(html: str, host: str = "localhost", port: int = 0) -> bool:
     """Serve ``html`` (with an "Approve"/"Deny" widget appended) over plain
     HTTP, print the URL to open it at, and block until one of the two
@@ -98,15 +144,27 @@ def run_approval_server(html: str, host: str = "localhost", port: int = 0) -> bo
 
     ``port`` defaults to ``0``, letting the OS pick a free port (printed as
     part of the URL) -- pass an explicit one to pin it.
+
+    Inside a Jupyter notebook (detected via :func:`_in_notebook`), the
+    report is, in addition to being reachable at the printed URL, also
+    rendered inline as the current cell's output (an ``<iframe>`` onto
+    that same URL), and that inline output is cleared again as soon as a
+    decision is made -- so a reviewer doesn't have to leave the notebook to
+    approve/deny, and the stale, no-longer-interactive report doesn't
+    linger once they have.
     """
     decision = _Decision()
     html_bytes = _inject_approval_widget(html).encode("utf-8")
     handler_cls = _make_handler_class(html_bytes, decision)
     httpd = http.server.HTTPServer((host, port), handler_cls)
+    url = f"http://{host}:{httpd.server_port}"
     try:
-        print(f"Approve or Deny at http://{host}:{httpd.server_port}")
-        while decision.approved is None:
-            httpd.handle_request()
+        print(f"Approve or Deny at {url}")
+        if _in_notebook():
+            _run_inline_in_notebook(httpd, decision, url)
+        else:
+            while decision.approved is None:
+                httpd.handle_request()
     finally:
         httpd.server_close()
     return decision.approved

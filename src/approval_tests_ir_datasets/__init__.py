@@ -142,13 +142,21 @@ class IrDatasetsApprovalTest:
         useful for verifying a dataset card and data files persisted on
         disk (e.g. a test fixture) without any network access.
 
-        If ``wait_for_approval`` is ``True``, the HTML report (rendered the
-        same way as for ``render_as_html`` -- forced on if it wasn't
-        already requested) is additionally served over plain HTTP on
-        ``localhost`` (see :mod:`approval_tests_ir_datasets.approval_server`),
-        with "Approve"/"Deny" buttons appended to the bottom of the page;
-        the URL to open is printed to stdout. This call then *blocks*
-        until one of the two buttons is clicked, at which point the server
+        If ``wait_for_approval`` is ``True``, this freshly computed result
+        is first compared against ``dataset_id``'s previously approved
+        snapshot (if any -- see below). An approval decision is only
+        actually asked for if there's something to decide on: either no
+        snapshot has been approved yet, or the fresh result differs from
+        the one that was. If a snapshot exists and matches, this step is
+        skipped entirely -- no server is started, nothing is printed
+        beyond the usual summary -- since there is nothing new for a human
+        to approve. Otherwise, the HTML report (rendered the same way as
+        for ``render_as_html`` -- forced on if it wasn't already
+        requested) is served over plain HTTP on ``localhost`` (see
+        :mod:`approval_tests_ir_datasets.approval_server`), with
+        "Approve"/"Deny" buttons appended to the bottom of the page; the
+        URL to open is printed to stdout. This call then *blocks* until
+        one of the two buttons is clicked, at which point the server
         stops. If "Approve" was clicked, the aggregated result is stored as
         a separate, dedicated snapshot (see
         :func:`approval_tests_ir_datasets.paths.approved_dir`) -- distinct
@@ -201,11 +209,13 @@ class IrDatasetsApprovalTest:
 
         self._compare_to_approved(dataset_id, results)
 
+        comparison = results.get("__approval_comparison__")
+        needs_approval = wait_for_approval and (comparison is None or not comparison["matches"])
+
+        approved_for_report = self.cached_approved_result(dataset_id) if needs_approval else None
+
         report_path = None
-        if render_as_html or wait_for_approval:
-            approved_for_report = None
-            if wait_for_approval:
-                approved_for_report = self.cached_approved_result(dataset_id)
+        if render_as_html or needs_approval:
             report_path = self._render_html_report(
                 dataset_id, dataset_ids, self._strip_bookkeeping_keys(results), approved_for_report
             )
@@ -213,8 +223,11 @@ class IrDatasetsApprovalTest:
 
         approval_status = None
         if wait_for_approval:
-            approved = self._run_approval_server(report_path)
-            approval_status = self._handle_approval_decision(dataset_id, results, approved)
+            if needs_approval:
+                approved = self._run_approval_server(report_path)
+                approval_status = self._handle_approval_decision(dataset_id, results, approved)
+            else:
+                approval_status = "✅ matches the previously approved snapshot -- skipping approval"
 
         self._print_summary(
             dataset_id, dataset_ids, results, report_path, approval_status, elapsed_seconds
@@ -276,7 +289,7 @@ class IrDatasetsApprovalTest:
         if metadata is not None and metadata.get("approved_at"):
             approved_at = IrDatasetsApprovalTest._format_timestamp(metadata["approved_at"])
             lines.append(
-                f"ℹ️  Approved results for {dataset_id!r} exist (approved on {approved_at})"
+                f"ℹ️ Approved results for {dataset_id!r} exist (approved on {approved_at})"
             )
 
         duration = IrDatasetsApprovalTest._format_duration(elapsed_seconds)

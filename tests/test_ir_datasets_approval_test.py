@@ -572,6 +572,32 @@ if IR_DATASETS_AVAILABLE:
         assert "SOMETHING-ELSE" in report_html
         assert "DATASET-ID" in report_html
 
+    def test_verify_skips_the_approval_server_when_results_match(
+        tmp_path, monkeypatch
+    ) -> None:
+        import ir_datasets
+
+        monkeypatch.setattr(ir_datasets.util, "home_path", lambda: tmp_path)
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+        )
+
+        def _fail_if_called(*args, **kwargs):
+            raise AssertionError("the approval server should not be started")
+
+        monkeypatch.setattr(
+            IrDatasetsApprovalTest, "_run_approval_server", staticmethod(_fail_if_called)
+        )
+        _seed_approved_result(tmp_path, "dataset-id", {"uppercase": "DATASET-ID"})
+
+        result = IrDatasetsApprovalTest().verify("dataset-id", wait_for_approval=True)
+
+        # No report is rendered either -- there was nothing new to show a
+        # human, so none of `wait_for_approval`'s machinery kicks in.
+        assert "__html_report__" not in result
+
     def test_verify_html_report_has_no_diff_highlighting_when_results_match(
         tmp_path, monkeypatch
     ) -> None:
@@ -588,7 +614,12 @@ if IR_DATASETS_AVAILABLE:
         )
         _seed_approved_result(tmp_path, "dataset-id", {"uppercase": "DATASET-ID"})
 
-        result = IrDatasetsApprovalTest().verify("dataset-id", wait_for_approval=True)
+        # `render_as_html` forces a report even though results match (and
+        # thus `wait_for_approval` alone would skip the approval server
+        # entirely -- see `test_verify_skips_the_approval_server_when_results_match`).
+        result = IrDatasetsApprovalTest().verify(
+            "dataset-id", wait_for_approval=True, render_as_html=True
+        )
 
         report_html = Path(result["__html_report__"]).read_text()
         assert "table-danger" not in report_html
