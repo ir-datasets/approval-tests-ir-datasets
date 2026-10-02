@@ -17,6 +17,7 @@ jobs:
       # Approval test results/artifacts are stored under
       # "<IR_DATASETS_HOME>/approvals"; keep that host-visible (see mounts above).
       IR_DATASETS_HOME: /tmp/.ir_datasets
+      TIRA_CACHE_DIR: /tmp/.tira
     permissions:
       contents: read
 
@@ -26,6 +27,9 @@ jobs:
 
       - name: Install package (test dependencies are preinstalled in the image)
         run: python -m pip install --no-deps -e .
+
+      - name: Initialize TIRA cache
+        run: mkdir -p "$TIRA_CACHE_DIR"
 
       - name: Run tests
         run: python -m pytest
