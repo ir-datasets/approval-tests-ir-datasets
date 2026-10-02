@@ -1,5 +1,6 @@
 import shutil
 import unittest
+from unittest import mock
 
 try:
     import ir_datasets.v2  # noqa: F401
@@ -17,6 +18,7 @@ except ImportError:
 
 TIRA_CLI_AVAILABLE = shutil.which("tira-cli") is not None
 
+from approval_tests_ir_datasets import verifiers
 from approval_tests_ir_datasets.verifiers import PyTerrierIndexVerifier
 
 REQUIREMENTS_AVAILABLE = (
@@ -74,3 +76,20 @@ class PyTerrierIndexVerifierTest(unittest.TestCase):
         )
 
         self.assertIsNone(index_path)
+
+
+@unittest.skipUnless(
+    IR_DATASETS_V2_AVAILABLE and TIRA_AVAILABLE,
+    "ir_datasets.v2 and tira are required (available in the dev container)",
+)
+class PyTerrierIndexVerifierTiraInstallationCheckTest(unittest.TestCase):
+    def test_verify_raises_without_invoking_tira_cli_when_installation_check_fails(
+        self,
+    ) -> None:
+        with mock.patch.object(verifiers, "_tira_installation_ok", False), mock.patch(
+            "subprocess.run"
+        ) as run:
+            with self.assertRaisesRegex(RuntimeError, "tira-cli verify-installation"):
+                PyTerrierIndexVerifier().verify("irds:cranfield-docs", recompute=True)
+
+        run.assert_not_called()

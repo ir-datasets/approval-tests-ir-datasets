@@ -2,6 +2,7 @@ import contextlib
 import importlib.metadata
 import inspect
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,24 @@ _PROVENANCE_EDGE_KINDS = {"irds:derived_from"}
 
 class DatasetNotFoundError(LookupError):
     """Raised when `verify` is asked to check an unknown dataset."""
+
+
+def _configure_tira_docker_tmpdir_for_codespaces() -> None:
+    """Point ``TIRA_DOCKER_TMPDIR`` at Codespaces' larger disk, if applicable.
+
+    GitHub Codespaces always sets ``CODESPACES=true`` inside the container
+    at runtime (unset for a plain local devcontainer/``docker run``); only
+    there is ``/tmp`` too small/ephemeral for Docker bind-mounts to work, so
+    ``tira-cli run local`` (used by
+    :class:`~approval_tests_ir_datasets.verifiers.PyTerrierIndexVerifier`)
+    needs ``TIRA_DOCKER_TMPDIR`` pointed at the larger disk Codespaces
+    mounts at ``/mnt/containerTmp`` instead. Setting this from Python
+    (rather than a devcontainer lifecycle command) ensures it's in effect
+    for every process that imports this package, regardless of which shell
+    (if any) started it.
+    """
+    if os.environ.get("CODESPACES") == "true":
+        os.environ["TIRA_DOCKER_TMPDIR"] = "/mnt/containerTmp"
 
 
 def _discover_verifiers() -> List[importlib.metadata.EntryPoint]:
@@ -191,6 +210,8 @@ class IrDatasetsApprovalTest:
         list of approval differences (both remain available on the
         returned dict) to stay readable; see :meth:`_print_summary`.
         """
+        _configure_tira_docker_tmpdir_for_codespaces()
+
         with self._hf_local_context(dataset_id, hf_local_dir):
             dataset_ids = self._collect_dataset_ids(dataset_id)
 

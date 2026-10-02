@@ -11,6 +11,42 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+#: Cached result of :func:`_tira_works` -- ``None`` until first checked,
+#: then ``True``/``False`` for the remainder of the process.
+_tira_installation_ok: Optional[bool] = None
+
+
+def _tira_works() -> bool:
+    """Checks, once per process, whether tira is correctly installed.
+
+    Runs ``tira-cli verify-installation --local-only`` the first time this
+    is called, caching whether it succeeded in a module-level variable; any
+    later call (from this or another verifier) just returns that cached
+    value instead of re-running the (slow, Docker-dependent) check again.
+
+    If the check fails, a message pointing at the command above is printed
+    to stdout, so a human running into a tira-backed verifier failing knows
+    exactly what to run to diagnose it. Returns ``False`` in that case, so
+    callers can fail fast with a clear error instead of letting tira-cli
+    itself produce a more confusing one later.
+    """
+    global _tira_installation_ok
+    if _tira_installation_ok is None:
+        process = subprocess.run(
+            ["tira-cli", "verify-installation", "--local-only"],
+            capture_output=True,
+            text=True,
+        )
+        _tira_installation_ok = process.returncode == 0
+        if not _tira_installation_ok:
+            print(
+                "tira-cli verify-installation --local-only is failing -- please get "
+                "it passing before using any tira-backed verifier.\n"
+                f"--- tira-cli stdout ---\n{process.stdout}\n"
+                f"--- tira-cli stderr ---\n{process.stderr}"
+            )
+    return _tira_installation_ok
+
 
 class TableLineCountVerifier:
     """Counts the records of an ir_datasets v2 table resource.
@@ -193,6 +229,12 @@ class PyTerrierIndexVerifier:
         import shutil
 
         from .paths import approvals_dir
+
+        if not _tira_works():
+            raise RuntimeError(
+                "tira-cli verify-installation --local-only is failing -- "
+                "see above for details."
+            )
 
         scratch_root = approvals_dir(dataset_id, "pyterrier_index")
         # Rebuild from a clean slate every time, so a previous run (e.g.
@@ -469,6 +511,12 @@ class RetrievalVerifier:
         from tira.rest_api_client import Client
 
         from .paths import approvals_dir, sanitize_path_component
+
+        if not _tira_works():
+            raise RuntimeError(
+                "tira-cli verify-installation --local-only is failing -- "
+                "see above for details."
+            )
 
         docs_dataset_id = node.docs.qualified_name
 

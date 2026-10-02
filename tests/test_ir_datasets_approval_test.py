@@ -1,5 +1,6 @@
 import importlib.metadata
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -59,6 +60,47 @@ class _RecomputeAwareVerifier:
     def verify(self, dataset_id: str, recompute: bool = False) -> Dict[str, Any]:
         type(self).calls.append(recompute)
         return {"dataset_id": dataset_id, "recompute": recompute}
+
+
+def test_verify_sets_tira_docker_tmpdir_when_in_codespaces(monkeypatch) -> None:
+    monkeypatch.setattr(
+        importlib.metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+    )
+    monkeypatch.setenv("CODESPACES", "true")
+    # The verified code under test sets this directly via os.environ (not
+    # monkeypatch), so monkeypatch.delenv(..., raising=False) alone would
+    # *not* register it for cleanup if it wasn't already set -- restore it
+    # manually instead, so it can't leak into (and break) later tests that
+    # exercise real tira-cli subprocess calls.
+    original = os.environ.pop("TIRA_DOCKER_TMPDIR", None)
+    try:
+        IrDatasetsApprovalTest().verify("dataset-id")
+
+        assert os.environ["TIRA_DOCKER_TMPDIR"] == "/mnt/containerTmp"
+    finally:
+        if original is None:
+            os.environ.pop("TIRA_DOCKER_TMPDIR", None)
+        else:
+            os.environ["TIRA_DOCKER_TMPDIR"] = original
+
+
+def test_verify_does_not_set_tira_docker_tmpdir_outside_codespaces(monkeypatch) -> None:
+    monkeypatch.setattr(
+        importlib.metadata,
+        "entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("uppercase", _UppercaseVerifier)]),
+    )
+    monkeypatch.delenv("CODESPACES", raising=False)
+    original = os.environ.pop("TIRA_DOCKER_TMPDIR", None)
+    try:
+        IrDatasetsApprovalTest().verify("dataset-id")
+
+        assert "TIRA_DOCKER_TMPDIR" not in os.environ
+    finally:
+        if original is not None:
+            os.environ["TIRA_DOCKER_TMPDIR"] = original
 
 
 def test_verify_does_not_render_html_by_default(monkeypatch) -> None:
