@@ -65,6 +65,32 @@ def approvals_dir(dataset_id: str, *parts: str) -> Path:
     return directory
 
 
+def clear_approvals(dataset_id: str) -> None:
+    """Remove ``dataset_id``'s entire ``approvals_dir`` subtree, if any.
+
+    This deletes every artifact a verifier has cached for ``dataset_id``
+    (e.g. a built PyTerrier index, retrieval runs, ``result.json``) --
+    everything :func:`approvals_dir` would otherwise let a verifier reuse
+    via ``recompute=False`` (the default, see each verifier's ``verify``
+    method). Primarily meant for tests that need a known-clean starting
+    point despite that default (rather than silently reusing whatever a
+    previous, possibly stale run already left behind).
+
+    Deliberately does *not* touch :func:`approved_dir`'s human-approved
+    snapshots -- those represent a deliberate approval decision, not a
+    disposable cache, so they are never cleared implicitly. Does nothing
+    (rather than raising) if nothing has been cached for ``dataset_id``
+    yet, or if ``ir_datasets`` isn't installed.
+    """
+    import shutil
+
+    try:
+        directory = approvals_home() / sanitize_dataset_id(dataset_id)
+    except ImportError:
+        return
+    shutil.rmtree(directory, ignore_errors=True)
+
+
 def approved_dir(dataset_id: str, *parts: str, create: bool = True) -> Path:
     """The deterministic directory a human-approved result snapshot for
     ``dataset_id`` is stored in (see ``APPROVED_DIR_NAME``).
@@ -89,6 +115,7 @@ __all__ = [
     "approved_dir",
     "approvals_dir",
     "approvals_home",
+    "clear_approvals",
     "sanitize_dataset_id",
     "sanitize_path_component",
 ]

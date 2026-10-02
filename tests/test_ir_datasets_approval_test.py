@@ -56,7 +56,7 @@ class _RecomputeAwareVerifier:
 
     calls: list = []
 
-    def verify(self, dataset_id: str, recompute: bool = True) -> Dict[str, Any]:
+    def verify(self, dataset_id: str, recompute: bool = False) -> Dict[str, Any]:
         type(self).calls.append(recompute)
         return {"dataset_id": dataset_id, "recompute": recompute}
 
@@ -89,7 +89,7 @@ def test_verify_writes_an_html_report_when_requested(monkeypatch) -> None:
     assert "DATASET-ID" in content
 
 
-def test_verify_defaults_to_recompute_true_for_verifiers_that_accept_it(monkeypatch) -> None:
+def test_verify_defaults_to_recompute_false_for_verifiers_that_accept_it(monkeypatch) -> None:
     _RecomputeAwareVerifier.calls = []
     monkeypatch.setattr(
         importlib.metadata,
@@ -99,11 +99,11 @@ def test_verify_defaults_to_recompute_true_for_verifiers_that_accept_it(monkeypa
 
     result = IrDatasetsApprovalTest().verify("dataset-id")
 
-    assert _RecomputeAwareVerifier.calls == [True]
-    assert result == {"recompute_aware": {"dataset_id": "dataset-id", "recompute": True}}
+    assert _RecomputeAwareVerifier.calls == [False]
+    assert result == {"recompute_aware": {"dataset_id": "dataset-id", "recompute": False}}
 
 
-def test_verify_forwards_recompute_false_to_verifiers_that_accept_it(monkeypatch) -> None:
+def test_verify_forwards_recompute_true_to_verifiers_that_accept_it(monkeypatch) -> None:
     _RecomputeAwareVerifier.calls = []
     monkeypatch.setattr(
         importlib.metadata,
@@ -111,10 +111,10 @@ def test_verify_forwards_recompute_false_to_verifiers_that_accept_it(monkeypatch
         lambda: _FakeEntryPoints([_FakeEntryPoint("recompute_aware", _RecomputeAwareVerifier)]),
     )
 
-    result = IrDatasetsApprovalTest().verify("dataset-id", recompute=False)
+    result = IrDatasetsApprovalTest().verify("dataset-id", recompute=True)
 
-    assert _RecomputeAwareVerifier.calls == [False]
-    assert result == {"recompute_aware": {"dataset_id": "dataset-id", "recompute": False}}
+    assert _RecomputeAwareVerifier.calls == [True]
+    assert result == {"recompute_aware": {"dataset_id": "dataset-id", "recompute": True}}
 
 
 def test_verify_ignores_recompute_for_verifiers_that_do_not_accept_it(monkeypatch) -> None:

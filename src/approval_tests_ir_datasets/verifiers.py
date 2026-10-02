@@ -117,22 +117,22 @@ class PyTerrierIndexVerifier:
     Use :meth:`cached_index_path` to look up a previously built index's
     directory without rebuilding it.
 
-    ``verify`` accepts a ``recompute`` keyword (default ``True``): when
-    ``True``, the index is always rebuilt from scratch, as described
-    above. When ``False``, an already-built index (found via
-    :meth:`cached_index_path`) is reused as-is -- its stats are read from
-    ``data.properties`` without invoking ``tira-cli`` again -- and the
-    index is only (re)built if none exists yet. Other verifiers that
-    merely *depend on* an index (e.g. :class:`RetrievalVerifier`, which
-    needs the *document* table's index to run retrieval against) call this
-    with ``recompute=False``, so that a fresh top-level rebuild of that
-    index (e.g. via traversal directly visiting the document table) isn't
-    redundantly repeated for every verifier that depends on it.
+    ``verify`` accepts a ``recompute`` keyword (default ``False``): by
+    default, an already-built index (found via :meth:`cached_index_path`)
+    is reused as-is -- its stats are read from ``data.properties`` without
+    invoking ``tira-cli`` again -- and the index is only (re)built if none
+    exists yet. Pass ``recompute=True`` to always rebuild the index from
+    scratch instead, as described above, regardless of what's already
+    cached. Other verifiers that merely *depend on* an index (e.g.
+    :class:`RetrievalVerifier`, which needs the *document* table's index
+    to run retrieval against) call this with ``recompute=False`` (the
+    default) explicitly, to make that dependency lookup clear at the call
+    site.
     """
 
     APPROACH = "ir-benchmarks/tira-ir-starter/Index (tira-ir-starter-pyterrier)"
 
-    def verify(self, dataset_id: str, recompute: bool = True) -> Optional[Dict[str, Any]]:
+    def verify(self, dataset_id: str, recompute: bool = False) -> Optional[Dict[str, Any]]:
         import ir_datasets.v2 as ir_datasets_v2
         import tira  # noqa: F401 -- lazily required; propagates ImportError if missing.
 
@@ -386,20 +386,20 @@ class RetrievalVerifier:
     and only surfaced (as part of the raised error) if that approach fails
     to produce a run file.
 
-    ``verify`` accepts a ``recompute`` keyword (default ``True``): when
-    ``True``, every approach is always rerun from scratch, as described
-    above. When ``False``, already-cached runs (found via
-    :meth:`cached_run_path`) are reused as-is -- read back from their run
-    files without rerunning anything -- and retrieval is only (re)run if
-    at least one approach isn't cached yet. Regardless of this verifier's
-    own ``recompute``, its dependency on the document table's PyTerrier
-    index (built via :class:`PyTerrierIndexVerifier`) always uses
-    ``recompute=False`` -- reusing whatever index is already there rather
-    than forcing yet another rebuild -- since that's just a dependency
-    lookup, not this verifier's own freshness obligation. Other verifiers
-    that merely *depend on* retrieval's runs (e.g. an evaluation verifier
-    computing metrics against them) should likewise call this with
-    ``recompute=False``.
+    ``verify`` accepts a ``recompute`` keyword (default ``False``): by
+    default, already-cached runs (found via :meth:`cached_run_path`) are
+    reused as-is -- read back from their run files without rerunning
+    anything -- and retrieval is only (re)run if at least one approach
+    isn't cached yet. Pass ``recompute=True`` to always rerun every
+    approach from scratch instead, as described above. Regardless of this
+    verifier's own ``recompute``, its dependency on the document table's
+    PyTerrier index (built via :class:`PyTerrierIndexVerifier`) always
+    uses ``recompute=False`` -- reusing whatever index is already there
+    rather than forcing yet another rebuild -- since that's just a
+    dependency lookup, not this verifier's own freshness obligation. Other
+    verifiers that merely *depend on* retrieval's runs (e.g. an evaluation
+    verifier computing metrics against them) should likewise call this
+    with ``recompute=False`` (the default).
     """
 
     #: The 5 retrieval approaches run by :meth:`verify`. The first entry is
@@ -430,7 +430,7 @@ class RetrievalVerifier:
         software = approach.split("/")[-1]
         return software.split(" (")[0]
 
-    def verify(self, dataset_id: str, recompute: bool = True) -> Optional[Dict[str, Any]]:
+    def verify(self, dataset_id: str, recompute: bool = False) -> Optional[Dict[str, Any]]:
         import ir_datasets.v2 as ir_datasets_v2
         import tira  # noqa: F401 -- lazily required; propagates ImportError if missing.
 
@@ -699,19 +699,19 @@ class EvaluationVerifier:
 
     This requires the optional ``ir_measures`` package.
 
-    ``verify`` accepts a ``recompute`` keyword (default ``True``) for
+    ``verify`` accepts a ``recompute`` keyword (default ``False``) for
     interface consistency with the other verifiers, but this verifier has
     no cached artifact of its own (evaluating already-retrieved runs
     against qrels is cheap) -- it never forces :class:`RetrievalVerifier`
     to rerun, regardless of its own ``recompute`` value; use
-    ``RetrievalVerifier().verify(dataset_id)`` directly (``recompute=True``
-    by default) to force a fresh retrieval before evaluating it.
+    ``RetrievalVerifier().verify(dataset_id, recompute=True)`` directly to
+    force a fresh retrieval before evaluating it.
     """
 
     #: The metrics reported for every run, keyed by their result dict key.
     MEASURES = {"nDCG@10": "nDCG@10", "recip_rank": "RR", "Recall@100": "Recall@100"}
 
-    def verify(self, dataset_id: str, recompute: bool = True) -> Optional[Dict[str, Any]]:
+    def verify(self, dataset_id: str, recompute: bool = False) -> Optional[Dict[str, Any]]:
         import ir_datasets.v2 as ir_datasets_v2
 
         node = ir_datasets_v2.load(dataset_id)

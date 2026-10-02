@@ -67,15 +67,16 @@ class IrDatasetsApprovalTest:
     deterministic directory rooted at ir_datasets' home directory (see
     :mod:`approval_tests_ir_datasets.paths`), on a best-effort basis: this is
     silently skipped if ``ir_datasets`` isn't installed. By default, every
-    call to :meth:`verify` re-runs all verifiers from scratch and overwrites
-    this persisted result (see ``recompute``); use :meth:`cached_result` to
-    read it back without triggering a re-run.
+    call to :meth:`verify` reuses each verifier's already-cached artifacts
+    rather than recomputing them (see ``recompute``); use
+    :meth:`cached_result` to read back the aggregated ``result.json`` itself
+    without triggering any verifier at all.
     """
 
     def verify(
         self,
         dataset_id: str,
-        recompute: bool = True,
+        recompute: bool = False,
         render_as_html: bool = False,
         hf_local_dir: Optional[Union[str, Path]] = None,
         wait_for_approval: bool = False,
@@ -104,7 +105,7 @@ class IrDatasetsApprovalTest:
         (see :meth:`cached_result`), in addition to the aggregated result
         being persisted for ``dataset_id`` itself.
 
-        ``recompute`` (default ``True``) is forwarded as a ``recompute``
+        ``recompute`` (default ``False``) is forwarded as a ``recompute``
         keyword to every verifier whose own ``verify(dataset_id, ...)``
         method accepts one (e.g. :class:`~approval_tests_ir_datasets.verifiers.PyTerrierIndexVerifier`,
         :class:`~approval_tests_ir_datasets.verifiers.RetrievalVerifier` and
@@ -113,16 +114,16 @@ class IrDatasetsApprovalTest:
         retrieval run) -- verifiers without a ``recompute`` parameter (e.g.
         :class:`~approval_tests_ir_datasets.verifiers.TableLineCountVerifier`)
         are simply called as before, since they have nothing to cache.
-        With ``recompute=True`` (the default), every verifier always
-        recomputes its result from scratch, e.g. rebuilding
-        ``PyTerrierIndexVerifier``'s index, exactly as before this
-        parameter existed. Pass ``recompute=False`` to instead reuse
-        whatever each verifier already has cached (see each verifier's own
-        docstring for what "cached" means to it), only computing it if
-        nothing is cached yet -- this can turn a slow, Docker/TIRA-backed
+        With ``recompute=False`` (the default), every verifier reuses
+        whatever it already has cached (see each verifier's own docstring
+        for what "cached" means to it), only computing it if nothing is
+        cached yet -- this turns a slow, Docker/TIRA-backed
         re-verification into a cheap read of previously produced results
         (e.g. when only regenerating the HTML report via
-        ``render_as_html`` for an already-verified dataset).
+        ``render_as_html`` for an already-verified dataset) by default.
+        Pass ``recompute=True`` to instead force every verifier to always
+        recompute its result from scratch, e.g. rebuilding
+        ``PyTerrierIndexVerifier``'s index unconditionally.
 
         If ``render_as_html`` is ``True``, the aggregated result is also
         rendered as a single, self-contained HTML report (see
@@ -423,7 +424,7 @@ class IrDatasetsApprovalTest:
         return local_hf_repo(repo, hf_local_dir)
 
     @staticmethod
-    def _run_verifiers(dataset_id: str, recompute: bool = True) -> Dict[str, Any]:
+    def _run_verifiers(dataset_id: str, recompute: bool = False) -> Dict[str, Any]:
         """Run every registered verifier against a single ``dataset_id``.
 
         Returns a dict mapping each verifier's entry point name to the
@@ -584,7 +585,7 @@ class IrDatasetsApprovalTest:
 
 def verify(
     dataset_id: str,
-    recompute: bool = True,
+    recompute: bool = False,
     render_as_html: bool = False,
     hf_local_dir: Optional[Union[str, Path]] = None,
     wait_for_approval: bool = False,
@@ -596,12 +597,14 @@ def verify(
     verifier plugin against ``dataset_id`` and returning their aggregated
     results (see :meth:`IrDatasetsApprovalTest.verify`).
 
-    ``recompute`` (default ``True``) is forwarded to every verifier that
-    accepts it, e.g. ``False`` reuses an already-built PyTerrier index or
-    already-computed retrieval runs instead of rebuilding them from
-    scratch; see :meth:`IrDatasetsApprovalTest.verify`'s docstring for
-    details. Use :func:`cached_result` to read back a previously persisted
-    *aggregated* result without re-running any verifier at all.
+    ``recompute`` (default ``False``) is forwarded to every verifier that
+    accepts it: by default, an already-built PyTerrier index or
+    already-computed retrieval runs are reused as-is instead of being
+    rebuilt from scratch; pass ``recompute=True`` to force every verifier
+    to recompute its result regardless of what's already cached -- see
+    :meth:`IrDatasetsApprovalTest.verify`'s docstring for details. Use
+    :func:`cached_result` to read back a previously persisted *aggregated*
+    result without re-running any verifier at all.
 
     If ``render_as_html`` is ``True``, the result is additionally rendered
     as a self-contained HTML report and written to a temporary directory
