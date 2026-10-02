@@ -32,4 +32,7 @@ RUN pip install --no-cache-dir "jupyter" "ipykernel"
 # and Recall@100 for RetrievalVerifier's cached runs against a dataset's qrels.
 RUN pip install --no-cache-dir "ir_measures"
 
+RUN pip uninstall -y tira && \
+    pip install --no-cache-dir "git+https://github.com/tira-io/tira.git@modified-verify-installation#subdirectory=python-client"
+
 WORKDIR /workspaces/approval-tests-ir-datasets
