@@ -20,9 +20,16 @@
   // stored under "<IR_DATASETS_HOME>/approvals". Pointing it at /tmp keeps
   // that directory host-visible, which PyTerrierIndexVerifier relies on.
   "remoteEnv": {
-    "IR_DATASETS_HOME": "/tmp/.ir_datasets"
+    "IR_DATASETS_HOME": "/tmp/.ir_datasets",
+    // Like IR_DATASETS_HOME above, kept under the host-visible /tmp mount
+    // (rather than the default "~/.tira") so it is writable regardless of
+    // which user the container runs as.
+    "TIRA_CACHE_DIR": "/tmp/.tira"
   },
-  "postStartCommand": "pip install --no-deps -e .",
+  // Install the local package, then verify the TIRA client is set up
+  // correctly in this container ("--local-only" skips checks needing TIRA
+  // server authentication, which aren't available/needed here).
+  "postStartCommand": "mkdir -p \"$TIRA_CACHE_DIR\" && pip install --no-deps -e . && tira-cli verify-installation --local-only",
   "customizations": {
     "vscode": {
       "extensions": [
