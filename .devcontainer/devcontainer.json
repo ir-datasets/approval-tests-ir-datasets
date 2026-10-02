@@ -26,10 +26,26 @@
     // which user the container runs as.
     "TIRA_CACHE_DIR": "/tmp/.tira"
   },
+  // Write the Codespaces-only env var to a shell startup file (rather than
+  // "remoteEnv", which has no conditional syntax) so VS Code's "userEnvProbe"
+  // (a login+interactive shell sourcing /etc/bash.bashrc, run once per
+  // attach) picks it up for every remote process it spawns -- terminals
+  // *and* Jupyter notebook kernels (launched via the extension host), not
+  // just postStartCommand below.
+  //
+  // GitHub Codespaces always sets CODESPACES=true inside the container at
+  // runtime (it is unset for a plain local devcontainer/docker run); only
+  // there is /tmp too small/ephemeral for Docker bind-mounts to work, so TIRA
+  // (via "tira-cli run local") needs TIRA_DOCKER_TMPDIR pointed at the larger
+  // disk Codespaces mounts at /mnt/containerTmp instead. TMPDIR itself is
+  // left alone since it already defaults to /tmp.
+  "postCreateCommand": "printf '\\nif [ \"$CODESPACES\" = \"true\" ]; then\\n  export TIRA_DOCKER_TMPDIR=/mnt/containerTmp\\nfi\\n' >> /etc/bash.bashrc",
   // Install the local package, then verify the TIRA client is set up
   // correctly in this container ("--local-only" skips checks needing TIRA
-  // server authentication, which aren't available/needed here).
-  "postStartCommand": "mkdir -p \"$TIRA_CACHE_DIR\" && pip install --no-deps -e . && tira-cli verify-installation --local-only",
+  // server authentication, which aren't available/needed here). Runs via a
+  // login+interactive shell so it sees the same /etc/bash.bashrc export as
+  // above.
+  "postStartCommand": "bash -lic 'mkdir -p \"$TIRA_CACHE_DIR\" && pip install --no-deps -e . && tira-cli verify-installation --local-only'",
   "customizations": {
     "vscode": {
       "extensions": [
