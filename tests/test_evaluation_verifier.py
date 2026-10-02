@@ -1,4 +1,3 @@
-import shutil
 import unittest
 
 try:
@@ -22,13 +21,9 @@ try:
 except ImportError:
     IR_MEASURES_AVAILABLE = False
 
-TIRA_CLI_AVAILABLE = shutil.which("tira-cli") is not None
-
 from approval_tests_ir_datasets.verifiers import EvaluationVerifier, RetrievalVerifier
 
-REQUIREMENTS_AVAILABLE = (
-    IR_DATASETS_V2_AVAILABLE and TIRA_AVAILABLE and TIRA_CLI_AVAILABLE and IR_MEASURES_AVAILABLE
-)
+REQUIREMENTS_AVAILABLE = IR_DATASETS_V2_AVAILABLE and TIRA_AVAILABLE and IR_MEASURES_AVAILABLE
 
 EXPECTED_APPROACH_NAMES = {"BM25", "DirichletLM", "DPH", "Hiemstra_LM", "PL2"}
 EXPECTED_METRIC_NAMES = {"nDCG@10", "recip_rank", "Recall@100"}
@@ -36,7 +31,7 @@ EXPECTED_METRIC_NAMES = {"nDCG@10", "recip_rank", "Recall@100"}
 
 @unittest.skipUnless(
     REQUIREMENTS_AVAILABLE,
-    "ir_datasets.v2, tira, tira-cli, docker and ir_measures are required (available in the dev container)",
+    "ir_datasets.v2, tira, docker and ir_measures are required (available in the dev container)",
 )
 class EvaluationVerifierTest(unittest.TestCase):
     def test_verify_reports_metrics_for_all_approaches_for_cranfield_benchmark(self) -> None:

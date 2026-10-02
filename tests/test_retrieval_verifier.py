@@ -1,4 +1,3 @@
-import shutil
 import sys
 import unittest
 from unittest import mock
@@ -19,21 +18,17 @@ try:
 except ImportError:
     TIRA_AVAILABLE = False
 
-TIRA_CLI_AVAILABLE = shutil.which("tira-cli") is not None
-
 from approval_tests_ir_datasets import verifiers
 from approval_tests_ir_datasets.verifiers import RetrievalVerifier
 
-REQUIREMENTS_AVAILABLE = (
-    IR_DATASETS_V2_AVAILABLE and TIRA_AVAILABLE and TIRA_CLI_AVAILABLE
-)
+REQUIREMENTS_AVAILABLE = IR_DATASETS_V2_AVAILABLE and TIRA_AVAILABLE
 
 EXPECTED_APPROACH_NAMES = {"BM25", "DirichletLM", "DPH", "Hiemstra_LM", "PL2"}
 
 
 @unittest.skipUnless(
     REQUIREMENTS_AVAILABLE,
-    "ir_datasets.v2, tira, tira-cli and docker are required (available in the dev container)",
+    "ir_datasets.v2, tira and docker are required (available in the dev container)",
 )
 class RetrievalVerifierTest(unittest.TestCase):
     def test_verify_runs_all_approaches_for_cranfield_benchmark(self) -> None:

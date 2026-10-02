@@ -73,7 +73,7 @@ def test_verify_sets_tira_docker_tmpdir_when_in_codespaces(monkeypatch) -> None:
     # monkeypatch), so monkeypatch.delenv(..., raising=False) alone would
     # *not* register it for cleanup if it wasn't already set -- restore it
     # manually instead, so it can't leak into (and break) later tests that
-    # exercise real tira-cli subprocess calls.
+    # exercise real tira client calls.
     original = os.environ.pop("TIRA_DOCKER_TMPDIR", None)
     try:
         IrDatasetsApprovalTest().verify("dataset-id")

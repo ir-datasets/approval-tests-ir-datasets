@@ -5,8 +5,6 @@ Each verifier here is registered under the
 ``pyproject.toml``.
 """
 import json
-import os
-import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,31 +17,40 @@ _tira_installation_ok: Optional[bool] = None
 def _tira_works() -> bool:
     """Checks, once per process, whether tira is correctly installed.
 
-    Runs ``tira-cli verify-installation --local-only`` the first time this
-    is called, caching whether it succeeded in a module-level variable; any
-    later call (from this or another verifier) just returns that cached
-    value instead of re-running the (slow, Docker-dependent) check again.
+    Calls :func:`tira.io_utils.verify_tira_installation` (the same check
+    powering ``tira-cli verify-installation --local-only``, but used
+    directly as a Python API rather than shelling out to that command)
+    the first time this is called, caching whether it succeeded in a
+    module-level variable; any later call (from this or another verifier)
+    just returns that cached value instead of re-running the (slow,
+    Docker-dependent) check again.
 
-    If the check fails, a message pointing at the command above is printed
-    to stdout, so a human running into a tira-backed verifier failing knows
-    exactly what to run to diagnose it. Returns ``False`` in that case, so
-    callers can fail fast with a clear error instead of letting tira-cli
-    itself produce a more confusing one later.
+    If the check fails, a message pointing at
+    ``tira-cli verify-installation --local-only`` is printed to stdout, so
+    a human running into a tira-backed verifier failing knows exactly what
+    to run to diagnose it (that command prints a much more readable,
+    human-facing report than this function's own captured output).
+    Returns ``False`` in that case, so callers can fail fast with a clear
+    error instead of letting tira produce a more confusing one later.
     """
     global _tira_installation_ok
     if _tira_installation_ok is None:
-        process = subprocess.run(
-            ["tira-cli", "verify-installation", "--local-only"],
-            capture_output=True,
-            text=True,
-        )
-        _tira_installation_ok = process.returncode == 0
+        import contextlib
+        import io
+
+        from tira.check_format import _fmt
+        from tira.io_utils import verify_tira_installation
+
+        captured_output = io.StringIO()
+        with contextlib.redirect_stdout(captured_output):
+            status = verify_tira_installation(local_only=True)
+        _tira_installation_ok = status == _fmt.OK
         if not _tira_installation_ok:
             print(
-                "tira-cli verify-installation --local-only is failing -- please get "
-                "it passing before using any tira-backed verifier.\n"
-                f"--- tira-cli stdout ---\n{process.stdout}\n"
-                f"--- tira-cli stderr ---\n{process.stderr}"
+                "tira's installation check is failing -- please get "
+                "`tira-cli verify-installation --local-only` passing before using "
+                "any tira-backed verifier.\n"
+                f"--- output ---\n{captured_output.getvalue()}"
             )
     return _tira_installation_ok
 
@@ -122,33 +129,35 @@ class PyTerrierIndexVerifier:
     Otherwise, the records are persisted to a ``documents.jsonl`` file in
     TIRA's "tirex" format (one JSON object per line with ``docno`` and
     ``text`` fields -- ``docno`` being each record's id, e.g. ``doc_id`` for
-    a document table or ``query_id`` for a query table), and
-    ``tira-cli run local --approach "ir-benchmarks/tira-ir-starter/Index
-    (tira-ir-starter-pyterrier)"`` is invoked against them to build a
-    PyTerrier index. Statistics parsed from the resulting index's
-    ``data.properties`` file are returned as
+    a document table or ``query_id`` for a query table), and tira's Python
+    client (``tira.rest_api_client.Client().local_execution.run(...)``,
+    equivalent to ``tira-cli run local --approach
+    "ir-benchmarks/tira-ir-starter/Index (tira-ir-starter-pyterrier)"``) is
+    invoked against them to build a PyTerrier index. Statistics parsed from
+    the resulting index's ``data.properties`` file are returned as
     ``{"num_documents": ..., "num_terms": ..., "num_tokens": ...}``
     (``"num_documents"`` counting whatever kind of record was indexed, e.g.
     documents or queries).
 
-    This requires the optional ``tira`` package, the ``tira-cli`` and
-    ``docker`` commands, and access to a Docker daemon (as configured in
-    this repository's dev container).
+    This requires the optional ``tira`` package and ``docker`` command,
+    and access to a Docker daemon (as configured in this repository's dev
+    container).
 
-    All working directories (the input documents, the built index, and
-    ``tira-cli``'s own scratch space) are created under the deterministic
-    ``approvals_dir(dataset_id, "pyterrier_index")`` directory (see
+    All working directories (the input documents and the built index) are
+    created under the deterministic ``approvals_dir(dataset_id,
+    "pyterrier_index")`` directory (see
     :mod:`approval_tests_ir_datasets.paths`), i.e. under ir_datasets' home
     directory, and are kept around after a successful run so the built
     index can be inspected/reused. This directory is cleared before each
     run to avoid stale state from a previous run leaking into the result.
 
-    ``tira-cli run local`` requires this directory to be visible under the
-    *same path* both inside this process and on the Docker host running
-    the containers it starts. Point ``IR_DATASETS_HOME`` at a directory
-    known to be host-visible (e.g. this repository's dev container
-    bind-mounts ``/tmp`` 1:1 from the host and sets
-    ``IR_DATASETS_HOME=/tmp/.ir_datasets``) if this doesn't hold by default.
+    Running the index-building software requires this directory to be
+    visible under the *same path* both inside this process and on the
+    Docker host running the containers it starts. Point
+    ``IR_DATASETS_HOME`` at a directory known to be host-visible (e.g. this
+    repository's dev container bind-mounts ``/tmp`` 1:1 from the host and
+    sets ``IR_DATASETS_HOME=/tmp/.ir_datasets``) if this doesn't hold by
+    default.
 
     Use :meth:`cached_index_path` to look up a previously built index's
     directory without rebuilding it.
@@ -156,10 +165,10 @@ class PyTerrierIndexVerifier:
     ``verify`` accepts a ``recompute`` keyword (default ``False``): by
     default, an already-built index (found via :meth:`cached_index_path`)
     is reused as-is -- its stats are read from ``data.properties`` without
-    invoking ``tira-cli`` again -- and the index is only (re)built if none
-    exists yet. Pass ``recompute=True`` to always rebuild the index from
-    scratch instead, as described above, regardless of what's already
-    cached. Other verifiers that merely *depend on* an index (e.g.
+    invoking tira again -- and the index is only (re)built if none exists
+    yet. Pass ``recompute=True`` to always rebuild the index from scratch
+    instead, as described above, regardless of what's already cached.
+    Other verifiers that merely *depend on* an index (e.g.
     :class:`RetrievalVerifier`, which needs the *document* table's index
     to run retrieval against) call this with ``recompute=False`` (the
     default) explicitly, to make that dependency lookup clear at the call
@@ -212,7 +221,7 @@ class PyTerrierIndexVerifier:
         Looks up the deterministic ``approvals_dir(dataset_id,
         "pyterrier_index")`` directory (see
         :mod:`approval_tests_ir_datasets.paths`) for a ``data.properties``
-        file, *without* invoking ``tira-cli``. Returns the directory
+        file, *without* invoking tira. Returns the directory
         containing it (the actual index), or ``None`` if no index has been
         built for ``dataset_id`` yet, or if ``ir_datasets`` isn't installed.
         """
@@ -226,6 +235,8 @@ class PyTerrierIndexVerifier:
         return properties_path.parent if properties_path is not None else None
 
     def _build_index(self, node: Any, dataset_id: str) -> Dict[str, Any]:
+        import contextlib
+        import io
         import shutil
 
         from .paths import approvals_dir
@@ -244,9 +255,7 @@ class PyTerrierIndexVerifier:
 
         input_dir = scratch_root / "input"
         output_dir = scratch_root / "output"
-        tmp_dir = scratch_root / "tmp"
         input_dir.mkdir()
-        tmp_dir.mkdir()
 
         documents_path = input_dir / "documents.jsonl"
         id_field = node.record_type._fields[0]
@@ -259,39 +268,49 @@ class PyTerrierIndexVerifier:
                     + "\n"
                 )
 
-        env = dict(os.environ)
-        env["TMPDIR"] = str(tmp_dir)
-        # "tira-cli run local" currently raises after the index is built
-        # successfully, because it also tries to evaluate the run against
-        # a *registered* TIRA dataset -- which a local documents
-        # directory is not. The index itself is still produced, so the
-        # non-zero exit code is intentionally ignored here. Its output is
-        # captured (rather than left to print) and only surfaced below if
-        # the index actually failed to materialize.
-        process = subprocess.run(
-            [
-                "tira-cli",
-                "run",
-                "local",
-                "--approach",
-                self.APPROACH,
-                "--input",
-                str(input_dir),
-                "--out",
-                str(output_dir),
-            ],
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        # TIRA's Python client (unlike "tira-cli run local") doesn't try to
+        # evaluate the result against a *registered* TIRA dataset
+        # afterwards, so it doesn't raise after a successful index build
+        # the way the CLI used to. Its diagnostic output (docker image
+        # pulling, streamed container logs, ...) is still captured rather
+        # than left to print, and only surfaced (appended to the raised
+        # error) if the index actually fails to build.
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(captured_stdout), contextlib.redirect_stderr(
+                captured_stderr
+            ):
+                from tira.rest_api_client import Client
+
+                client = Client()
+                team, software = self.APPROACH.split("/")[1:]
+                system_details = client.public_system_details(team, software)
+                image = system_details.get("public_image_name") or system_details["tira_image_name"]
+
+                client.local_execution.run(
+                    image=image,
+                    command=system_details["command"],
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    allow_network=False,
+                    forward_environment_variables=system_details.get(
+                        "forward_environment_variable"
+                    ),
+                )
+        except Exception as exc:
+            raise RuntimeError(
+                "Building the PyTerrier index via tira failed.\n"
+                f"--- stdout ---\n{captured_stdout.getvalue()}\n"
+                f"--- stderr ---\n{captured_stderr.getvalue()}"
+            ) from exc
 
         properties_path = self._find_data_properties(scratch_root)
         if properties_path is None:
             raise RuntimeError(
-                "tira-cli did not produce a PyTerrier index (no data.properties found).\n"
-                f"--- tira-cli stdout ---\n{process.stdout}\n"
-                f"--- tira-cli stderr ---\n{process.stderr}"
+                "tira did not produce a PyTerrier index (no data.properties found).\n"
+                f"--- stdout ---\n{captured_stdout.getvalue()}\n"
+                f"--- stderr ---\n{captured_stderr.getvalue()}"
             )
         return self._stats_from_properties(self._parse_properties(properties_path))
 
