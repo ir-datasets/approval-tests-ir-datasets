@@ -417,10 +417,13 @@ class RetrievalVerifier:
     and access to a Docker daemon (as configured in this repository's dev
     container). Like :class:`PyTerrierIndexVerifier`, all working
     directories are created under ir_datasets' home directory and must be
-    host-visible (see that class' docstring for details), and are kept
-    around after a successful run -- cleared before each rebuild. Use
-    :meth:`cached_run_path` to look up a previously produced run file
-    without rebuilding it.
+    host-visible (see that class' docstring for details). Each approach
+    gets its own ``approvals_dir(dataset_id, "retrieval", <approach name>)``
+    directory (containing its full ``input``/``output`` working tree, so
+    everything that approach's TIRA execution produced is kept together,
+    rather than mixing multiple approaches' outputs into one directory)
+    which is kept around after a successful run. Use :meth:`cached_run_path`
+    to look up a previously produced run file without rebuilding it.
 
     Each approach's TIRA execution (image pulling, container logs,
     PyTerrier's own startup output, ...) prints a lot of diagnostic noise
@@ -429,11 +432,14 @@ class RetrievalVerifier:
     to produce a run file.
 
     ``verify`` accepts a ``recompute`` keyword (default ``False``): by
-    default, already-cached runs (found via :meth:`cached_run_path`) are
-    reused as-is -- read back from their run files without rerunning
-    anything -- and retrieval is only (re)run if at least one approach
-    isn't cached yet. Pass ``recompute=True`` to always rerun every
-    approach from scratch instead, as described above. Regardless of this
+    default, each approach is checked *independently* -- if its own run
+    file (found via :meth:`cached_run_path`) already exists, it is reused
+    as-is and that approach's TIRA execution is never (re-)invoked at all,
+    even if a sibling approach's output is missing or stale (e.g. a
+    previous call was interrupted after only some approaches finished);
+    only approaches without a cached run file yet are actually (re)run.
+    Pass ``recompute=True`` to always rerun *every* approach from scratch
+    instead, regardless of what's already cached. Regardless of this
     verifier's own ``recompute``, its dependency on the document table's
     PyTerrier index (built via :class:`PyTerrierIndexVerifier`) always
     uses ``recompute=False`` -- reusing whatever index is already there
@@ -486,7 +492,7 @@ class RetrievalVerifier:
             if cached is not None:
                 return cached
 
-        return self._run_retrieval(node, dataset_id)
+        return self._run_retrieval(node, dataset_id, recompute=recompute)
 
     def _cached_result(self, node: Any, dataset_id: str) -> Optional[Dict[str, Any]]:
         """Read back already-cached runs without rerunning anything.
@@ -505,18 +511,10 @@ class RetrievalVerifier:
         num_queries = sum(1 for _ in node.queries)
         return self._build_result(run_paths, num_queries)
 
-    def _run_retrieval(self, node: Any, dataset_id: str) -> Dict[str, Any]:
+    def _run_retrieval(self, node: Any, dataset_id: str, recompute: bool = False) -> Dict[str, Any]:
         import shutil
 
-        from tira.rest_api_client import Client
-
         from .paths import approvals_dir, sanitize_path_component
-
-        if not _tira_works():
-            raise RuntimeError(
-                "tira-cli verify-installation --local-only is failing -- "
-                "see above for details."
-            )
 
         docs_dataset_id = node.docs.qualified_name
 
@@ -535,26 +533,48 @@ class RetrievalVerifier:
         input_run_dir = index_dir.parent
 
         scratch_root = approvals_dir(dataset_id, "retrieval")
-        # Rebuild from a clean slate every time, so a previous run can't
-        # leak into this one.
-        shutil.rmtree(scratch_root, ignore_errors=True)
         scratch_root.mkdir(parents=True, exist_ok=True)
 
         input_dir = scratch_root / "input"
-        input_dir.mkdir()
+        input_dir.mkdir(exist_ok=True)
 
         num_queries = self._write_queries(node.queries, dataset_id, input_dir / "queries.xml")
 
-        client = Client()
+        client = None  # lazily created -- only needed if at least one approach must (re)run.
 
         run_paths: Dict[str, Path] = {}
         for approach in self.APPROACHES:
             name = self._approach_name(approach)
-            output_dir = scratch_root / sanitize_path_component(name) / "output"
+            approach_dir = scratch_root / sanitize_path_component(name)
+            output_dir = approach_dir / "output"
+            run_path = output_dir / "run.txt"
+
+            if not recompute and run_path.is_file():
+                # Already cached -- never re-execute an approach whose
+                # output is already there, even if a sibling approach (or
+                # the input queries themselves) needed (re)computing.
+                run_paths[name] = run_path
+                continue
+
+            if not _tira_works():
+                raise RuntimeError(
+                    "tira-cli verify-installation --local-only is failing -- "
+                    "see above for details."
+                )
+            if client is None:
+                from tira.rest_api_client import Client
+
+                client = Client()
+
+            # Rebuild this approach's own directory from a clean slate, so
+            # a previous (e.g. failed) run of it can't leak into this one
+            # -- other approaches' directories are left untouched.
+            shutil.rmtree(approach_dir, ignore_errors=True)
             output_dir.mkdir(parents=True)
 
-            run_path = self._run_approach(client, approach, name, input_dir, output_dir, input_run_dir)
-            run_paths[name] = run_path
+            run_paths[name] = self._run_approach(
+                client, approach, name, input_dir, output_dir, input_run_dir
+            )
 
         return self._build_result(run_paths, num_queries)
 

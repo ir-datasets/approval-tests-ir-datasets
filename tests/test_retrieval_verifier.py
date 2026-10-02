@@ -96,6 +96,49 @@ class RetrievalVerifierTest(unittest.TestCase):
 
         self.assertIsNone(run_path)
 
+    def test_verify_only_reruns_approaches_missing_from_the_cache(self) -> None:
+        # Make sure every approach is cached first.
+        RetrievalVerifier().verify("irds:cranfield")
+
+        # Simulate a partial cache (e.g. a previous call that was
+        # interrupted after only some approaches finished) by dropping a
+        # single approach's cached run.
+        dph_run_path = RetrievalVerifier().cached_run_path(
+            "irds:cranfield",
+            "ir-benchmarks/tira-ir-starter/DPH (tira-ir-starter-pyterrier)",
+        )
+        dph_run_path.unlink()
+
+        with mock.patch.object(
+            RetrievalVerifier, "_run_approach", wraps=RetrievalVerifier._run_approach
+        ) as run_approach:
+            result = RetrievalVerifier().verify("irds:cranfield")
+
+        reran = [call.args[2] for call in run_approach.call_args_list]
+        self.assertEqual(reran, ["DPH"])
+        self.assertEqual(set(result["runs"].keys()), EXPECTED_APPROACH_NAMES)
+
+    def test_verify_does_not_rerun_anything_when_fully_cached(self) -> None:
+        RetrievalVerifier().verify("irds:cranfield")
+
+        with mock.patch.object(
+            RetrievalVerifier, "_run_approach", wraps=RetrievalVerifier._run_approach
+        ) as run_approach:
+            RetrievalVerifier().verify("irds:cranfield")
+
+        run_approach.assert_not_called()
+
+    def test_verify_with_recompute_reruns_every_approach_even_if_cached(self) -> None:
+        RetrievalVerifier().verify("irds:cranfield")
+
+        with mock.patch.object(
+            RetrievalVerifier, "_run_approach", wraps=RetrievalVerifier._run_approach
+        ) as run_approach:
+            RetrievalVerifier().verify("irds:cranfield", recompute=True)
+
+        reran = {call.args[2] for call in run_approach.call_args_list}
+        self.assertEqual(reran, EXPECTED_APPROACH_NAMES)
+
 
 @unittest.skipUnless(
     IR_DATASETS_V2_AVAILABLE and TIRA_AVAILABLE,
