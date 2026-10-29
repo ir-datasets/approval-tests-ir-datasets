@@ -75,6 +75,10 @@ class _LocalAwareHfApi:
     def __init__(self, hub: _LocalAwareHub) -> None:
         self._hub = hub
 
+    def __getattr__(self, name):
+        # Anything else (e.g. ``list_datasets``) is not about a local repo.
+        return getattr(self._hub._real_hf_lib().HfApi(), name)
+
     def dataset_info(self, repo_id, revision=None):
         if repo_id in _local_dirs:
             return _FakeDatasetInfo(_FAKE_COMMIT)
@@ -97,6 +101,11 @@ def _ensure_installed() -> None:
     _installed = True
 
 
+def _repo_of(key):
+    # _repo_cache is keyed by the bare repo id; the others by (repo, ...) tuples
+    return key[0] if isinstance(key, tuple) else key
+
+
 def _clear_repo_caches(repo: str) -> None:
     """Purge every cache entry ``hf_provider`` keeps for ``repo``, so a later
     lookup of the same repo id (e.g. a real one reusing this id, however
@@ -104,8 +113,8 @@ def _clear_repo_caches(repo: str) -> None:
     data."""
     from ir_datasets.v2 import hf_provider as hfm
 
-    for cache in (hfm._card_cache, hfm._repo_cache, hfm._table_cache, hfm._benchmark_cache):
-        for key in [key for key in cache if key[0] == repo]:
+    for cache in (hfm._card_cache, hfm._repo_cache, hfm._node_cache):
+        for key in [key for key in cache if _repo_of(key) == repo]:
             del cache[key]
 
 

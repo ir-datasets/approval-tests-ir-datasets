@@ -2,24 +2,22 @@
 tags:
 - ir-datasets
 ir_datasets:
-  default: eval
-  tables:
-    docs:
-      entity: docs
-      file: data/docs.jsonl
-    queries:
-      entity: queries
-      file: data/queries.jsonl
-    qrels:
-      entity: qrels
-      file: data/qrels.jsonl
-  benchmarks:
-    eval:
-      docs: docs
-      queries: queries
-      qrels: qrels
-      metrics:
-      - nDCG@10
+  - fragment: null
+    type: irds:AdhocBenchmark
+    docs: docs
+    queries: queries
+    qrels: qrels
+    metrics:
+    - nDCG@10
+  - fragment: docs
+    type: irds:Docs
+    file: data/docs.jsonl
+  - fragment: queries
+    type: irds:Queries
+    file: data/queries.jsonl
+  - fragment: qrels
+    type: irds:Qrels
+    file: data/qrels.jsonl
 ---
 
 # Example Pangram Dataset

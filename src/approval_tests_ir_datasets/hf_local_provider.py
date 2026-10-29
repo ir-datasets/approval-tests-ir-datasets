@@ -15,8 +15,7 @@ path (relative to the current working directory, or absolute) to a directory
 laid out exactly like a real ``hf:`` dataset repo (a ``README.md`` with an
 ``ir_datasets:``/``ir-datasets:`` YAML frontmatter card, plus whatever
 ``file:`` paths it declares), and the optional ``/fragment`` is a raw
-``tables:`` key, a ``benchmarks:`` key, or (with exactly one benchmark) a
-facet name -- exactly like ``hf:``'s own fragment. Since ``<path>`` may
+``fragment`` of one of the card's entries -- exactly like ``hf:``'s own fragment. Since ``<path>`` may
 itself contain ``/``, it is *not* found by splitting on the first/last ``/``
 alone: the whole spec is first tried as a directory outright, and only if
 that isn't one is its last path segment peeled off and tried as a fragment

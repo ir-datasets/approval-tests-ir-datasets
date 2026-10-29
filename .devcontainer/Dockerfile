@@ -14,8 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir --upgrade pip
 
-# Install ir-datasets from the v2 branch.
-RUN pip install --no-cache-dir "git+https://github.com/ir-datasets/ir-datasets.git@v2"
+# Install ir-datasets from the v2 branch, pinned to a commit so rebuilds are
+# reproducible (bump the SHA to upgrade).
+RUN pip install --no-cache-dir "git+https://github.com/ir-datasets/ir-datasets.git@07a9ad7eddbfb5c701c716ed815fd0b7b4003708"
+
+# hf: / hf-local: datasets (HfDataset.requires) need these at resolve time.
+RUN pip install --no-cache-dir "huggingface_hub" "datasets"
 
 # Install test dependencies (kept in sync with pyproject.toml's [project.optional-dependencies].test).
 RUN pip install --no-cache-dir "coverage[toml]>=7.6" "pytest>=8.3"

@@ -34,9 +34,8 @@ class LocalHfRepoTest(unittest.TestCase):
 
         self.assertNotIn(REPO, _local_dirs)
         self.assertFalse(any(key[0] == REPO for key in hfm._card_cache))
-        self.assertFalse(any(key[0] == REPO for key in hfm._repo_cache))
-        self.assertFalse(any(key[0] == REPO for key in hfm._table_cache))
-        self.assertFalse(any(key[0] == REPO for key in hfm._benchmark_cache))
+        self.assertFalse(any(key == REPO for key in hfm._repo_cache))
+        self.assertFalse(any(key[0] == REPO for key in hfm._node_cache))
 
     def test_forgets_the_repo_even_if_the_body_raises(self) -> None:
         with self.assertRaises(ValueError):

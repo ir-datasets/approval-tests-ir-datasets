@@ -68,10 +68,10 @@ class TableLineCountVerifier:
     def verify(self, dataset_id: str) -> Optional[Dict[str, Any]]:
         import ir_datasets.v2 as ir_datasets_v2
         from ir_datasets.v2.nodes import TABLE
-        from ir_datasets.v2.vocabulary import is_subtype
+        from ir_datasets.v2.vocabulary import is_subclass
 
         node = ir_datasets_v2.load(dataset_id)
-        if not is_subtype(getattr(node, "type", None), TABLE):
+        if not is_subclass(getattr(node, "type", None), TABLE):
             return None
         return {"length": len(node)}
 
@@ -92,10 +92,10 @@ class QrelTableStatsVerifier:
     def verify(self, dataset_id: str) -> Optional[Dict[str, Any]]:
         import ir_datasets.v2 as ir_datasets_v2
         from ir_datasets.v2.nodes import TABLE_TYPES
-        from ir_datasets.v2.vocabulary import is_subtype
+        from ir_datasets.v2.vocabulary import is_subclass
 
         node = ir_datasets_v2.load(dataset_id)
-        if not is_subtype(getattr(node, "type", None), TABLE_TYPES["qrels"]):
+        if not is_subclass(getattr(node, "type", None), TABLE_TYPES["qrels"]):
             return None
 
         query_ids = set()

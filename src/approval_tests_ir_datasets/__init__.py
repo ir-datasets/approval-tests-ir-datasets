@@ -29,7 +29,7 @@ ENTRY_POINT_GROUP = "approval_tests_ir_datasets.verifiers"
 #: "this benchmark has this document table"). Only content edges are followed
 #: when traversing a dataset's sub resources -- provenance edges would pull in
 #: raw, non-table resources that none of the verifiers apply to anyway.
-_PROVENANCE_EDGE_KINDS = {"irds:derived_from"}
+_PROVENANCE_EDGE_KINDS = {"irds:derivedFrom"}
 
 
 class DatasetNotFoundError(LookupError):
@@ -107,7 +107,7 @@ class IrDatasetsApprovalTest:
         benchmark's document, query and qrels tables) by following
         ir_datasets.v2's structural "content" edges (``docs``, ``queries``,
         ``qrels``, ``docpairs``, ``scoreddocs``, ...) -- provenance edges
-        (e.g. ``derived_from`` a raw archive) are not followed. This
+        (e.g. ``derivedFrom`` a raw archive) are not followed. This
         traversal requires ``ir_datasets``; if it isn't installed, or
         ``dataset_id`` doesn't expose any structural edges (e.g. it's
         already a leaf table), only ``dataset_id`` itself is checked.
@@ -488,7 +488,7 @@ class IrDatasetsApprovalTest:
         benchmark's ``docs``, ``queries``, ``qrels``, ``docpairs`` and
         ``scoreddocs``), traversed breadth-first and deduplicated.
 
-        Provenance edges (``derived_from``) are not followed. Returns just
+        Provenance edges (``derivedFrom``) are not followed. Returns just
         ``[dataset_id]`` if ``ir_datasets`` isn't installed, if
         ``dataset_id`` can't be resolved, or if it has no structural edges
         (e.g. it's already a leaf table).
