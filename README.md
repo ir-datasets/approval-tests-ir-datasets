@@ -36,3 +36,21 @@ dataset lookup support has not been implemented yet.
   to do this (e.g. a dedicated test hook, or a `file://`-style repo id),
   `hf_local.py` and `hf_local_provider.py` should be rewritten (or removed
   entirely) to use that instead.
+
+## Contributing approved results (attestations)
+
+An approved snapshot (see `verify(..., wait_for_approval=True)`) can be
+contributed to the ir_datasets attestation server
+(`https://attest.ir-datasets.com`). Nothing is ever sent by `verify()`; you
+submit explicitly:
+
+```bash
+approval-tests-ir-datasets-attest irds:cranfield --dry-run   # show the records
+approval-tests-ir-datasets-attest irds:cranfield             # asks before submitting
+```
+
+Per table, a `hash` and a `visual` attestation are submitted; per evaluated
+approach, an `evaluation` attestation. `visual` attestations must be signed:
+register once with `ir_datasets attest register <username>`. With
+`--anonymous` they are skipped. Use `--server` or `$IR_DATASETS_ATTEST_URL` to
+target another server. Denied snapshots are never submitted.
